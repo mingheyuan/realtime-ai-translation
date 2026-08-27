@@ -126,6 +126,8 @@ python3 -m py_compile model-worker/worker.py
 
 核心 Rust 进程负责会话、分段、版本控制、SQLite、WebSocket 和 LLM。Swift 文件只承担 Apple 原生音频与 Speech framework 桥接。Python 只作为 MarianMT 常驻模型进程，不负责 ASR，也不负责业务状态。
 
+构建脚本会把 Swift Bridge 打包为 `target/RealtimeTranslationSpeechBridge.app`。不要改为直接运行裸 Mach-O；macOS TCC 需要从 app bundle 的 `Info.plist` 读取麦克风、语音识别和系统音频权限用途说明。
+
 ## 当前限制
 
 - 仅支持中文和英文。

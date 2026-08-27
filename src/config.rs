@@ -32,7 +32,7 @@ impl AppConfig {
             .unwrap_or_else(|| manifest_dir.join("data/dictionary.sqlite3"));
         let speech_bridge_path = env::var_os("RT_TRANSLATION_SPEECH_BRIDGE")
             .map(PathBuf::from)
-            .unwrap_or_else(|| manifest_dir.join("target/macos-speech-bridge"));
+            .unwrap_or_else(|| manifest_dir.join("target/RealtimeTranslationSpeechBridge.app"));
         let python_path = env::var_os("RT_TRANSLATION_PYTHON")
             .map(PathBuf::from)
             .unwrap_or_else(|| manifest_dir.join(".venv/bin/python"));

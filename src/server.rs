@@ -140,7 +140,7 @@ struct HealthResponse {
 async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
     Json(HealthResponse {
         ok: true,
-        speech_bridge_ready: state.inner.config.speech_bridge_path.is_file(),
+        speech_bridge_ready: state.inner.config.speech_bridge_path.is_dir(),
         model_worker_ready: state.inner.config.python_path.is_file()
             && state.inner.config.model_worker_path.is_file(),
         fake_translation: state.inner.config.fake_translation,
@@ -249,7 +249,9 @@ async fn run_session(
         &request.source_language,
         request.audio_source,
         &hotwords,
-    ) {
+    )
+    .await
+    {
         Ok(bridge) => bridge,
         Err(error) => {
             state.emit(ServerEvent::Error {

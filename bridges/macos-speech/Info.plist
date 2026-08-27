@@ -4,8 +4,12 @@
 <dict>
     <key>CFBundleIdentifier</key>
     <string>com.mingheyuan.realtime-translation.speech-bridge</string>
+    <key>CFBundleExecutable</key>
+    <string>macos-speech-bridge</string>
     <key>CFBundleName</key>
     <string>Realtime Translation Speech Bridge</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>CFBundleShortVersionString</key>
@@ -16,5 +20,7 @@
     <string>实时翻译需要使用 Apple Speech 将语音转换成文字。</string>
     <key>NSScreenCaptureUsageDescription</key>
     <string>实时翻译需要捕获系统音频，以识别视频通话中对方的声音。</string>
+    <key>LSUIElement</key>
+    <true/>
 </dict>
 </plist>

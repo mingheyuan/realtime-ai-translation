@@ -202,9 +202,10 @@ async function jsonRequest(url, options = {}) {
 }
 
 elements.start.addEventListener("click", async () => {
+  setRunning(true);
   try {
     setStatus("正在启动 Apple Speech…");
-    const response = await jsonRequest("/api/session/start", {
+    await jsonRequest("/api/session/start", {
       method: "POST",
       body: JSON.stringify({
         source_language: elements.source.value,
@@ -212,7 +213,6 @@ elements.start.addEventListener("click", async () => {
         audio_source: elements.audioSource.value,
       }),
     });
-    setRunning(response.running);
   } catch (error) {
     setRunning(false);
     showToast(error.message, "error");

@@ -1,5 +1,6 @@
 import AVFoundation
 import CoreMedia
+import Darwin
 import Foundation
 import ScreenCaptureKit
 import Speech
@@ -34,6 +35,44 @@ private func argumentValues(named name: String) -> [String] {
 private func fail(_ message: String) -> Never {
     emit(["type": "error", "message": message])
     exit(1)
+}
+
+private func connectControlSocket(at path: String) -> Bool {
+    let descriptor = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+    guard descriptor >= 0 else { return false }
+
+    var address = sockaddr_un()
+    address.sun_family = sa_family_t(AF_UNIX)
+    let pathBytes = Array(path.utf8CString)
+    let pathCapacity = MemoryLayout.size(ofValue: address.sun_path)
+    guard pathBytes.count <= pathCapacity else {
+        Darwin.close(descriptor)
+        return false
+    }
+    path.withCString { source in
+        withUnsafeMutablePointer(to: &address.sun_path) { pointer in
+            pointer.withMemoryRebound(to: CChar.self, capacity: pathCapacity) { destination in
+                _ = Darwin.strncpy(destination, source, pathCapacity)
+            }
+        }
+    }
+    let addressLength = socklen_t(MemoryLayout<sa_family_t>.size + pathBytes.count)
+    let connected = withUnsafePointer(to: &address) { pointer in
+        pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+            Darwin.connect(descriptor, $0, addressLength)
+        }
+    }
+    guard connected == 0 else {
+        Darwin.close(descriptor)
+        return false
+    }
+    guard Darwin.dup2(descriptor, STDIN_FILENO) >= 0,
+          Darwin.dup2(descriptor, STDOUT_FILENO) >= 0 else {
+        Darwin.close(descriptor)
+        return false
+    }
+    Darwin.close(descriptor)
+    return true
 }
 
 private func authorizeMicrophone() -> Bool {
@@ -332,6 +371,10 @@ private enum SystemAudioError: LocalizedError {
 let localeIdentifier = argumentValues(named: "--locale").first ?? "zh-CN"
 let contextualTerms = argumentValues(named: "--term")
 let audioSourceValue = argumentValues(named: "--audio-source").first ?? "microphone"
+if let socketPath = argumentValues(named: "--socket").first,
+   !connectControlSocket(at: socketPath) {
+    exit(2)
+}
 guard let audioSource = AudioSource(rawValue: audioSourceValue) else {
     fail("Unsupported audio source: \(audioSourceValue)")
 }
