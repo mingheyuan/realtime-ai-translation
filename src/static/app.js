@@ -24,6 +24,7 @@ let socket;
 let reconnectTimer;
 let sessionActive = false;
 let activeSegmentId = null;
+let historySegmentId = null;
 const segmentVersions = new Map();
 
 function otherLocale(locale) {
@@ -95,6 +96,7 @@ function handleEvent(event) {
     if (event.running && !sessionActive) {
       sessionActive = true;
       activeSegmentId = null;
+      historySegmentId = null;
       segmentVersions.clear();
       elements.captions.replaceChildren();
       elements.empty.hidden = false;
@@ -111,13 +113,13 @@ function handleEvent(event) {
   if (event.type === "dictionary_changed") loadDictionary();
 }
 
-function captionTemplate(event) {
+function captionTemplate(event, role) {
   const article = document.createElement("article");
-  article.className = "caption";
+  article.className = `caption caption-${role}`;
   article.dataset.segment = event.segment_id;
   article.innerHTML = `
     <div class="caption-meta">
-      <span class="phase"></span>
+      <div><span class="caption-role"></span><span class="phase"></span></div>
       <span class="latency"></span>
     </div>
     <label class="caption-field source-field">
@@ -141,31 +143,61 @@ function captionTemplate(event) {
       article.classList.add("edited");
     });
   }
+  setCaptionRole(article, role);
+  return article;
+}
+
+function setCaptionRole(article, role) {
+  article.classList.toggle("caption-current", role === "current");
+  article.classList.toggle("caption-history", role === "history");
+  article.querySelector(".caption-role").textContent =
+    role === "history" ? "上一段" : "当前段";
+  article.setAttribute(
+    "aria-label",
+    role === "history" ? "上一段历史字幕" : "当前实时字幕",
+  );
+}
+
+function archiveCurrentCaption() {
+  const current = elements.captions.querySelector(".caption-current");
+  if (!current || activeSegmentId === null) return;
+  elements.captions.querySelector(".caption-history")?.remove();
+  historySegmentId = activeSegmentId;
+  activeSegmentId = null;
+  setCaptionRole(current, "history");
+  elements.captions.prepend(current);
+}
+
+function captionForEvent(event) {
+  if (event.segment_id === historySegmentId) {
+    return elements.captions.querySelector(".caption-history");
+  }
+  if (event.segment_id === activeSegmentId) {
+    return elements.captions.querySelector(".caption-current");
+  }
+  if (activeSegmentId !== null && event.segment_id > activeSegmentId) {
+    archiveCurrentCaption();
+  }
+  const newestVisibleId = Math.max(activeSegmentId ?? -1, historySegmentId ?? -1);
+  if (event.segment_id <= newestVisibleId) return null;
+
+  const article = captionTemplate(event, "current");
+  activeSegmentId = event.segment_id;
+  elements.captions.append(article);
   return article;
 }
 
 function renderCaption(event) {
-  // The backend keeps sentence-sized segments for context and ordering, while
-  // the live UI deliberately reuses one caption card. Once a newer segment is
-  // visible, late results from an older segment must never reclaim the card.
-  if (activeSegmentId !== null && event.segment_id < activeSegmentId) return;
+  // Keep one mutable current segment and one replaceable history segment.
+  // Late final results may still improve the visible history card, while an
+  // older segment can never replace either of the two newer cards.
   const knownRevision = segmentVersions.get(event.segment_id) ?? -1;
   if (knownRevision >= event.revision) return;
   segmentVersions.set(event.segment_id, event.revision);
   elements.empty.hidden = true;
 
-  const startsNewSegment =
-    activeSegmentId === null || event.segment_id > activeSegmentId;
-  let article = elements.captions.querySelector(".caption");
-  if (!article) {
-    article = captionTemplate(event);
-    elements.captions.append(article);
-  }
-  if (startsNewSegment) {
-    activeSegmentId = event.segment_id;
-    article.dataset.segment = event.segment_id;
-    article.classList.remove("edited");
-  }
+  const article = captionForEvent(event);
+  if (!article) return;
   if (article.classList.contains("edited")) return;
 
   article.dataset.state = event.state;
@@ -206,6 +238,10 @@ function renderCaption(event) {
     : event.latency_ms
       ? `${event.latency_ms} ms`
       : "实时";
+
+  if (event.state === "final" && event.segment_id === activeSegmentId) {
+    archiveCurrentCaption();
+  }
 }
 
 function autoResize(textarea) {

@@ -85,9 +85,15 @@ impl SegmentManager {
 }
 
 fn ends_sentence(text: &str) -> bool {
+    let text = text.trim_end_matches(|character: char| {
+        matches!(
+            character,
+            '\"' | '\'' | '”' | '’' | ')' | '）' | ']' | '】' | '}' | '》'
+        )
+    });
     matches!(
         text.chars().last(),
-        Some('。' | '！' | '？' | '.' | '!' | '?')
+        Some('。' | '！' | '？' | '.' | '!' | '?' | '；' | ';' | '…' | '\n')
     )
 }
 
@@ -123,5 +129,14 @@ mod tests {
             .expect("next segment");
         assert_eq!(next.source_text, "第二句");
         assert_eq!(next.segment_id, 2);
+    }
+
+    #[test]
+    fn sentence_boundary_accepts_bilingual_punctuation_and_closing_quotes() {
+        assert!(ends_sentence("这一段结束了。”"));
+        assert!(ends_sentence("Is this finished?\""));
+        assert!(ends_sentence("先暂停；"));
+        assert!(ends_sentence("未完待续……"));
+        assert!(!ends_sentence("这一段还没有结束"));
     }
 }
