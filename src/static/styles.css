@@ -186,16 +186,16 @@ select:focus, input:focus, textarea:focus { border-color: #756aff; box-shadow: 0
 }
 .caption-history {
   border-color: rgba(255,255,255,.055);
+  border-style: solid;
   background: #171a23;
   opacity: .58;
   transform: scale(.985);
   transform-origin: center bottom;
+  transition: none;
 }
-.caption-history:hover, .caption-history:focus-within { opacity: .82; }
 .caption-history .translation { color: #d5d7df; font-size: 16px; }
 .caption-history .caption-actions { display: none; }
 .caption[data-state="partial"] { opacity: .72; border-style: dashed; }
-.caption-history[data-state="partial"] { opacity: .5; }
 .caption[data-state="draft"] { border-color: rgba(113,101,246,.25); }
 .caption[data-state="final"] { border-color: rgba(69,215,166,.19); }
 .caption.translation-pending .translation { color: #c8cad3; opacity: .72; }

@@ -165,7 +165,31 @@ function archiveCurrentCaption() {
   historySegmentId = activeSegmentId;
   activeSegmentId = null;
   setCaptionRole(current, "history");
+  freezeHistoryCaption(current);
   elements.captions.prepend(current);
+}
+
+function freezeHistoryCaption(article) {
+  article.dataset.state = "history";
+  article.classList.remove("edited", "translation-pending");
+  article.querySelector(".phase").textContent = "已完成";
+  article.querySelector(".latency").textContent = "";
+  for (const textarea of article.querySelectorAll("textarea")) {
+    textarea.readOnly = true;
+  }
+}
+
+function applyFinalHistoryCorrection(article, event) {
+  if (event.state !== "final" || !event.translation_text.trim()) return;
+  article.dataset.originalSource = event.source_text;
+  article.dataset.originalTranslation = event.translation_text;
+  article.querySelector(".source").value = event.source_text;
+  article.querySelector(".translation").value = event.translation_text;
+  article.querySelector(".phase").textContent = event.llm_applied
+    ? "LLM 终稿"
+    : "最终译文";
+  autoResize(article.querySelector(".source"));
+  autoResize(article.querySelector(".translation"));
 }
 
 function captionForEvent(event) {
@@ -198,6 +222,10 @@ function renderCaption(event) {
 
   const article = captionForEvent(event);
   if (!article) return;
+  if (event.segment_id === historySegmentId) {
+    applyFinalHistoryCorrection(article, event);
+    return;
+  }
   if (article.classList.contains("edited")) return;
 
   article.dataset.state = event.state;
