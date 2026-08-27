@@ -3,6 +3,7 @@ const elements = {
   empty: document.querySelector("#empty-state"),
   start: document.querySelector("#start"),
   stop: document.querySelector("#stop"),
+  overlayOpen: document.querySelector("#overlay-open"),
   swap: document.querySelector("#swap"),
   audioSource: document.querySelector("#audio-source"),
   audioSourceHint: document.querySelector("#audio-source-hint"),
@@ -304,6 +305,18 @@ elements.stop.addEventListener("click", async () => {
   }
 });
 
+elements.overlayOpen.addEventListener("click", async () => {
+  elements.overlayOpen.disabled = true;
+  try {
+    await jsonRequest("/api/overlay/open", { method: "POST" });
+    showToast("悬浮字幕已打开；可拖动到任意位置");
+  } catch (error) {
+    showToast(error.message, "error");
+  } finally {
+    elements.overlayOpen.disabled = false;
+  }
+});
+
 elements.swap.addEventListener("click", () => {
   const source = elements.source.value;
   elements.source.value = elements.target.value;
@@ -448,6 +461,10 @@ async function loadHealth() {
     document.querySelector('[data-health="model"]').dataset.ready =
       health.model_worker_ready || health.fake_translation;
     document.querySelector('[data-health="llm"]').dataset.ready = health.llm_enabled;
+    elements.overlayOpen.dataset.ready = health.overlay_ready;
+    elements.overlayOpen.title = health.overlay_ready
+      ? "打开始终置顶的半透明字幕窗口"
+      : "需要先运行 ./scripts/build-macos-overlay.sh";
   } catch (error) {
     showToast(error.message, "error");
   }

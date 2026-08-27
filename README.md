@@ -62,6 +62,7 @@ MarianMT 本身不是流式模型，不能安全地只翻译 ASR 新增的几个
 - 稳定前缀缓存和可回滚滑动窗口，避免连续讲话时从句首反复翻译。
 - 终稿可编辑；短差异可保存为双语词典项。
 - 浏览器界面支持语言切换、启动停止、字幕历史和词典管理。
+- macOS 半透明悬浮字幕，始终置顶并可跨桌面、全屏空间显示。
 
 ## 环境要求
 
@@ -80,11 +81,14 @@ MarianMT 本身不是流式模型，不能安全地只翻译 ASR 新增的几个
 
 ```bash
 ./scripts/build-macos-speech.sh
+./scripts/build-macos-overlay.sh
 ./scripts/setup-models.sh
 cargo run
 ```
 
-打开 <http://127.0.0.1:8765>，选择音频来源和翻译方向，再点击“开始实时翻译”。
+打开 <http://127.0.0.1:8765>，选择音频来源和翻译方向，再点击“开始实时翻译”。点击“悬浮字幕”会打开一个不占 Dock、半透明、始终置顶的原生字幕窗口；拖动窗口顶部可以调整位置，点右上角 `×` 关闭。它和主界面读取同一个 WebSocket，不会启动第二套 ASR 或翻译任务。
+
+悬浮窗沿用了 Saymore 的关键窗口行为：无边框透明背景、floating 层级、`CanJoinAllSpaces` 与 `FullScreenAuxiliary`。字幕内部仍采用本项目的“一个可变当前段 + 一个不可变历史段”状态机，历史段封存后不会被迟到的翻译结果刷新。
 
 ### 识别视频通话声音
 
@@ -161,12 +165,12 @@ python3 -m py_compile model-worker/worker.py
 
 核心 Rust 进程负责会话、分段、版本控制、SQLite、WebSocket 和 LLM。Swift 文件只承担 Apple 原生音频与 Speech framework 桥接。Python 只作为 MarianMT 常驻模型进程，不负责 ASR，也不负责业务状态。
 
-构建脚本会把 Swift Bridge 打包为 `target/RealtimeTranslationSpeechBridge.app`。不要改为直接运行裸 Mach-O；macOS TCC 需要从 app bundle 的 `Info.plist` 读取麦克风、语音识别和系统音频权限用途说明。
+两个构建脚本分别生成 `target/RealtimeTranslationSpeechBridge.app` 和 `target/RealtimeTranslationOverlay.app`。不要把 Speech Bridge 改为直接运行裸 Mach-O；macOS TCC 需要从 app bundle 的 `Info.plist` 读取麦克风、语音识别和系统音频权限用途说明。
 
 ## 当前限制
 
 - 仅支持中文和英文。
-- Web UI 是本机服务，不是已签名的 `.app` 安装包。
+- 主控制台仍是本机 Web UI；悬浮字幕是临时签名的本机 `.app` 辅助组件，尚未打包为可分发安装程序。
 - 系统音频当前按显示器采集，不提供单个通话应用/窗口选择；一次会话也不能同时分离麦克风与系统音频。
 - Apple Speech 的可用性和离线能力取决于系统、语言包与 macOS。
 - MarianMT 首次加载和第一次推理明显慢于后续请求；CPU 内存占用取决于 PyTorch 和已加载的模型方向。

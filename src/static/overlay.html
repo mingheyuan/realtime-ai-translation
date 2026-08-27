@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>悬浮字幕</title>
+    <link rel="stylesheet" href="/overlay.css" />
+  </head>
+  <body>
+    <main class="overlay-shell">
+      <header class="drag-bar" aria-label="拖动区域">
+        <span class="live-dot"></span>
+        <span id="overlay-status">正在连接实时翻译</span>
+        <span class="drag-hint">拖动移动</span>
+      </header>
+      <section class="caption-stack" id="caption-stack" aria-live="polite">
+        <article class="caption-card waiting" id="waiting-card">
+          <div class="waiting-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+          <span>等待语音输入…</span>
+        </article>
+      </section>
+    </main>
+    <script src="/overlay.js"></script>
+  </body>
+</html>

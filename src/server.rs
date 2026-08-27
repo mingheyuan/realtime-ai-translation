@@ -100,8 +100,12 @@ pub fn router(state: AppState) -> Router {
         .route("/", get(index))
         .route("/app.js", get(javascript))
         .route("/styles.css", get(stylesheet))
+        .route("/overlay", get(overlay))
+        .route("/overlay.js", get(overlay_javascript))
+        .route("/overlay.css", get(overlay_stylesheet))
         .route("/ws", get(websocket))
         .route("/api/health", get(health))
+        .route("/api/overlay/open", post(open_overlay))
         .route("/api/session/start", post(start_session))
         .route("/api/session/stop", post(stop_session))
         .route(
@@ -131,10 +135,29 @@ async fn stylesheet() -> impl IntoResponse {
     )
 }
 
+async fn overlay() -> Html<&'static str> {
+    Html(include_str!("static/overlay.html"))
+}
+
+async fn overlay_javascript() -> impl IntoResponse {
+    (
+        [("content-type", "text/javascript; charset=utf-8")],
+        include_str!("static/overlay.js"),
+    )
+}
+
+async fn overlay_stylesheet() -> impl IntoResponse {
+    (
+        [("content-type", "text/css; charset=utf-8")],
+        include_str!("static/overlay.css"),
+    )
+}
+
 #[derive(Serialize)]
 struct HealthResponse {
     ok: bool,
     speech_bridge_ready: bool,
+    overlay_ready: bool,
     model_worker_ready: bool,
     fake_translation: bool,
     llm_enabled: bool,
@@ -144,11 +167,50 @@ async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
     Json(HealthResponse {
         ok: true,
         speech_bridge_ready: state.inner.config.speech_bridge_path.is_dir(),
+        overlay_ready: state.inner.config.overlay_app_path.is_dir(),
         model_worker_ready: state.inner.config.python_path.is_file()
             && state.inner.config.model_worker_path.is_file(),
         fake_translation: state.inner.config.fake_translation,
         llm_enabled: state.inner.config.llm.enabled,
     })
+}
+
+#[derive(Serialize)]
+struct OverlayResponse {
+    opened: bool,
+}
+
+async fn open_overlay(State(state): State<AppState>) -> Result<Json<OverlayResponse>, ApiError> {
+    let app_path = &state.inner.config.overlay_app_path;
+    if !app_path.is_dir() {
+        return Err(ApiError::service_unavailable(
+            "悬浮字幕组件尚未构建，请先运行 ./scripts/build-macos-overlay.sh",
+        ));
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let overlay_url = format!(
+            "http://127.0.0.1:{}/overlay",
+            state.inner.config.listen.port()
+        );
+        let status = tokio::process::Command::new("open")
+            .arg(app_path)
+            .arg("--args")
+            .arg(overlay_url)
+            .status()
+            .await
+            .map_err(|error| ApiError::internal(format!("无法启动悬浮字幕：{error}")))?;
+        if !status.success() {
+            return Err(ApiError::internal(format!(
+                "macOS 打开悬浮字幕失败（状态：{status}）"
+            )));
+        }
+        Ok(Json(OverlayResponse { opened: true }))
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    Err(ApiError::service_unavailable("悬浮字幕目前只支持 macOS"))
 }
 
 async fn websocket(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
@@ -656,6 +718,20 @@ impl ApiError {
             message: message.to_owned(),
         }
     }
+
+    fn service_unavailable(message: &str) -> Self {
+        Self {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            message: message.to_owned(),
+        }
+    }
+
+    fn internal(message: String) -> Self {
+        Self {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message,
+        }
+    }
 }
 
 impl From<DictionaryError> for ApiError {
@@ -794,6 +870,39 @@ mod tests {
             serde_json::from_slice(&health_body).expect("health JSON");
         assert_eq!(health_json["ok"], true);
         assert_eq!(health_json["fake_translation"], true);
+        assert_eq!(health_json["overlay_ready"], false);
+
+        let overlay = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/overlay")
+                    .body(Body::empty())
+                    .expect("overlay request"),
+            )
+            .await
+            .expect("overlay response");
+        assert_eq!(overlay.status(), StatusCode::OK);
+        let overlay_body = to_bytes(overlay.into_body(), 64 * 1024)
+            .await
+            .expect("overlay body");
+        assert!(String::from_utf8_lossy(&overlay_body).contains("caption-stack"));
+
+        let missing_overlay_app = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/overlay/open")
+                    .body(Body::empty())
+                    .expect("open overlay request"),
+            )
+            .await
+            .expect("open overlay response");
+        assert_eq!(
+            missing_overlay_app.status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
 
         let entry = serde_json::json!({
             "id": null,
@@ -847,6 +956,7 @@ mod tests {
             listen: "127.0.0.1:0".parse().expect("listen address"),
             database_path: directory.path().join("dictionary.sqlite3"),
             speech_bridge_path: directory.path().join("speech-bridge"),
+            overlay_app_path: directory.path().join("overlay.app"),
             python_path: directory.path().join("python"),
             model_worker_path: directory.path().join("worker.py"),
             fake_translation: true,

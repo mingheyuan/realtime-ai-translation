@@ -10,6 +10,7 @@ pub struct AppConfig {
     pub listen: SocketAddr,
     pub database_path: PathBuf,
     pub speech_bridge_path: PathBuf,
+    pub overlay_app_path: PathBuf,
     pub python_path: PathBuf,
     pub model_worker_path: PathBuf,
     pub fake_translation: bool,
@@ -40,6 +41,9 @@ impl AppConfig {
         let speech_bridge_path = env::var_os("RT_TRANSLATION_SPEECH_BRIDGE")
             .map(PathBuf::from)
             .unwrap_or_else(|| manifest_dir.join("target/RealtimeTranslationSpeechBridge.app"));
+        let overlay_app_path = env::var_os("RT_TRANSLATION_OVERLAY_APP")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| manifest_dir.join("target/RealtimeTranslationOverlay.app"));
         let python_path = env::var_os("RT_TRANSLATION_PYTHON")
             .map(PathBuf::from)
             .unwrap_or_else(|| manifest_dir.join(".venv/bin/python"));
@@ -67,6 +71,7 @@ impl AppConfig {
             listen,
             database_path,
             speech_bridge_path,
+            overlay_app_path,
             python_path,
             model_worker_path,
             fake_translation,
