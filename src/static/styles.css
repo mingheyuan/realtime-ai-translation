@@ -187,6 +187,7 @@ select:focus, input:focus, textarea:focus { border-color: #756aff; box-shadow: 0
 .caption[data-state="partial"] { opacity: .72; border-style: dashed; }
 .caption[data-state="draft"] { border-color: rgba(113,101,246,.25); }
 .caption[data-state="final"] { border-color: rgba(69,215,166,.19); }
+.caption.translation-pending .translation { color: #c8cad3; opacity: .72; }
 .caption-meta { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .phase { color: #8d86ff; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; }
 .caption[data-state="final"] .phase { color: #5ed0aa; }

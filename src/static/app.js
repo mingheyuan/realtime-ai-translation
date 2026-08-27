@@ -162,28 +162,39 @@ function renderCaption(event) {
   article.dataset.sourceLanguage = event.source_language;
   article.dataset.targetLanguage = event.target_language;
   article.dataset.originalSource = event.source_text;
-  article.dataset.originalTranslation = event.translation_text;
 
   const source = article.querySelector(".source");
   const translation = article.querySelector(".translation");
+  const receivedTranslation = event.translation_text.trim().length > 0;
+  const hasVisibleTranslation = translation.value.trim().length > 0;
+  const holdsPreviousTranslation =
+    event.state === "partial" && !receivedTranslation && hasVisibleTranslation;
+
   source.value = event.source_text;
-  translation.value = event.translation_text;
-  translation.placeholder =
-    event.state === "partial" ? "正在生成快速译文…" : "";
+  if (receivedTranslation || !hasVisibleTranslation) {
+    translation.value = event.translation_text;
+  }
+  if (receivedTranslation) {
+    article.dataset.originalTranslation = event.translation_text;
+  }
+  article.classList.toggle("translation-pending", holdsPreviousTranslation);
+  translation.placeholder = translation.value ? "" : "正在生成快速译文…";
   source.readOnly = event.state !== "final";
   translation.readOnly = event.state !== "final";
   autoResize(source);
   autoResize(translation);
 
   const phaseNames = {
-    partial: "ASR 原文",
+    partial: holdsPreviousTranslation ? "ASR 更新 · 译文待覆盖" : "ASR 原文",
     draft: "快速译文",
     final: event.llm_applied ? "LLM 终稿" : "最终译文",
   };
   article.querySelector(".phase").textContent = phaseNames[event.state];
-  article.querySelector(".latency").textContent = event.latency_ms
-    ? `${event.latency_ms} ms`
-    : "实时";
+  article.querySelector(".latency").textContent = holdsPreviousTranslation
+    ? "等待新译文"
+    : event.latency_ms
+      ? `${event.latency_ms} ms`
+      : "实时";
 }
 
 function autoResize(textarea) {
