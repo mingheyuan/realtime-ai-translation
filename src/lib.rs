@@ -5,4 +5,5 @@ pub mod domain;
 pub mod llm;
 pub mod segment;
 pub mod server;
+pub mod streaming;
 pub mod translation;

@@ -34,6 +34,7 @@ use crate::{
     },
     llm::LlmRefiner,
     segment::SegmentManager,
+    streaming::TranslationStateMachine,
     translation::{
         FakeTranslator, PythonMarianTranslator, SharedTranslationProvider, TranslationOutput,
     },
@@ -53,6 +54,7 @@ struct AppStateInner {
     events: broadcast::Sender<ServerEvent>,
     session: Mutex<Option<SessionHandle>>,
     context: Mutex<VecDeque<(String, String)>>,
+    streaming: Mutex<TranslationStateMachine>,
 }
 
 struct SessionHandle {
@@ -83,6 +85,7 @@ impl AppState {
                 events,
                 session: Mutex::new(None),
                 context: Mutex::new(VecDeque::with_capacity(4)),
+                streaming: Mutex::new(TranslationStateMachine::default()),
             }),
         })
     }
@@ -199,6 +202,7 @@ async fn start_session(
         }));
     }
     state.inner.context.lock().await.clear();
+    state.inner.streaming.lock().await.reset();
     let id = Uuid::new_v4();
     let (stop_tx, stop_rx) = oneshot::channel();
     *session = Some(SessionHandle {
@@ -422,31 +426,56 @@ async fn process_snapshot(
             Vec::new()
         }
     };
-    let draft = match state
-        .inner
-        .translator
-        .translate(
+    let plan = {
+        let mut streaming = state.inner.streaming.lock().await;
+        streaming.begin(
+            snapshot.segment_id,
+            snapshot.revision,
             &normalized,
             &request.source_language,
-            &request.target_language,
-            &glossary,
+            snapshot.state == CaptionState::Final,
         )
-        .await
-    {
-        Ok(output) => output,
-        Err(error) => {
-            state.emit(ServerEvent::Error {
-                code: "translation_failed".to_owned(),
-                message: error.to_string(),
-            });
-            TranslationOutput {
-                text: normalized.clone(),
-                latency_ms: 0,
-            }
-        }
     };
-    let draft_latency_ms = draft.latency_ms;
-    let mut translation_text = draft.text;
+    let Some(plan) = plan else {
+        return;
+    };
+
+    let mut draft_latency_ms: u128 = 0;
+    let mut translation_text = if plan.full_reconcile {
+        let output = translate_or_fallback(&state, &request, &glossary, &plan.mutable_window).await;
+        draft_latency_ms = draft_latency_ms.saturating_add(output.latency_ms);
+        let mut streaming = state.inner.streaming.lock().await;
+        let Some(assembled) = streaming.finish_final(&plan, &output.text) else {
+            return;
+        };
+        assembled
+    } else {
+        let mut committed_translations = Vec::with_capacity(plan.chunks_to_commit.len());
+        for chunk in &plan.chunks_to_commit {
+            let output =
+                translate_or_fallback(&state, &request, &glossary, &chunk.model_text).await;
+            draft_latency_ms = draft_latency_ms.saturating_add(output.latency_ms);
+            committed_translations.push(output.text);
+        }
+        let mutable_translation = if plan.mutable_window.is_empty() {
+            String::new()
+        } else {
+            let output =
+                translate_or_fallback(&state, &request, &glossary, &plan.mutable_window).await;
+            draft_latency_ms = draft_latency_ms.saturating_add(output.latency_ms);
+            output.text
+        };
+        let mut streaming = state.inner.streaming.lock().await;
+        let Some(assembled) = streaming.finish_window(
+            &plan,
+            &committed_translations,
+            &mutable_translation,
+            &request.target_language,
+        ) else {
+            return;
+        };
+        assembled
+    };
     let mut llm_applied = false;
     drop(translation_permit);
     state.emit(ServerEvent::Caption {
@@ -510,6 +539,37 @@ async fn process_snapshot(
         llm_applied,
         latency_ms: started.elapsed().as_millis().max(draft_latency_ms),
     });
+}
+
+async fn translate_or_fallback(
+    state: &AppState,
+    request: &StartSessionRequest,
+    glossary: &[GlossaryEntry],
+    text: &str,
+) -> TranslationOutput {
+    match state
+        .inner
+        .translator
+        .translate(
+            text,
+            &request.source_language,
+            &request.target_language,
+            glossary,
+        )
+        .await
+    {
+        Ok(output) => output,
+        Err(error) => {
+            state.emit(ServerEvent::Error {
+                code: "translation_failed".to_owned(),
+                message: error.to_string(),
+            });
+            TranslationOutput {
+                text: text.to_owned(),
+                latency_ms: 0,
+            }
+        }
+    }
 }
 
 fn event_revision(asr_revision: u64, phase: u64) -> u64 {

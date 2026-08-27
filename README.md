@@ -17,8 +17,9 @@ Apple Speech（partial / final + contextualStrings 热词）
   ↓
 Segment Manager（segment_id + revision）
   ├─ 立即推送 ASR 原文
-  ├─ 最多每 500ms 调用本地 MarianMT，覆盖为快速译文
-  └─ 句号 / ASR final / 900ms 停顿后调用可选 LLM，覆盖为终稿
+  ├─ Translation State Machine 提交稳定前缀，保留可回滚尾部
+  ├─ 最多每 500ms 只翻译当前滑动窗口，拼接已缓存译文
+  └─ 句号 / ASR final / 900ms 停顿后整句校准，再调用可选 LLM
 ```
 
 同一句话不会不断新增字幕，而是使用相同的 `segment_id` 和更高的 `revision` 替换旧内容。即使旧翻译请求较晚返回，浏览器也会丢弃它，因此不会把已经修正的文本回滚成旧错误。
@@ -26,6 +27,18 @@ Segment Manager（segment_id + revision）
 当新一版 ASR 原文已经到达、对应的新译文仍在生成时，界面会保留上一版译文并标记“等待新译文”，直到新草稿或终稿到达后再原位覆盖，避免字幕在两次结果之间闪白。
 
 实时页面始终复用同一个字幕框。后端仍按句子分段以维护翻译上下文，但新句不会创建新的字幕卡片；它会在原框中置换内容。新句出现后，迟到的旧句翻译会被直接丢弃，不能把字幕框回滚到上一句。
+
+## 流式翻译状态机
+
+MarianMT 本身不是流式模型，不能安全地只翻译 ASR 新增的几个字；中英词序变化可能同时修改前面的译文。因此应用层维护 `Collecting → TranslatingWindow → Finalizing → Finalized` 状态机：
+
+1. 比较连续两次 ASR hypothesis，找出未变化的稳定前缀。
+2. 中文保留最后 12 个字、英文保留最后约 32 个字符作为可回滚区。
+3. 稳定前缀超过窗口后分块翻译并缓存；之后只把尾部窗口送给 MarianMT。
+4. 如果 Apple Speech 修改已经提交的前缀，立即清空该段缓存并从修正文本重建。
+5. 断句时只进行一次完整句翻译，替换分块草稿，修复跨窗口语序。
+
+默认可变窗口上限为中文 36 个字、英文 96 个字符。窗口结果仍使用 `segment_id + revision` 校验，旧 generation 即使晚返回也不会覆盖新字幕。
 
 这不是三套 ASR。Apple Speech 是唯一的语音识别器；MarianMT 和 LLM 接收的都是文字：
 
@@ -44,6 +57,7 @@ Segment Manager（segment_id + revision）
 - 可选 OpenAI-compatible LLM 终稿。
 - WebSocket 可替换字幕：ASR 原文 → 快速译文 → LLM 终稿。
 - 模型忙时丢弃过期 partial，final 可靠排队，避免冷启动积压拖慢终稿。
+- 稳定前缀缓存和可回滚滑动窗口，避免连续讲话时从句首反复翻译。
 - 终稿可编辑；短差异可保存为双语词典项。
 - 浏览器界面支持语言切换、启动停止、字幕历史和词典管理。
 
