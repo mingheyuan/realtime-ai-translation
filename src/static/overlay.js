@@ -1,6 +1,9 @@
 const stack = document.querySelector("#caption-stack");
 const waiting = document.querySelector("#waiting-card");
 const statusLabel = document.querySelector("#overlay-status");
+const modeLabel = document.querySelector("#overlay-mode");
+const startButton = document.querySelector("#overlay-start");
+const stopButton = document.querySelector("#overlay-stop");
 
 let socket;
 let reconnectTimer;
@@ -8,6 +11,46 @@ let sessionRunning = false;
 let activeSegmentId = null;
 let historySegmentId = null;
 const segmentVersions = new Map();
+let preferences = {
+  source_language: "zh-CN",
+  target_language: "en-US",
+  audio_source: "microphone",
+};
+
+function setRunning(running) {
+  sessionRunning = running;
+  startButton.disabled = running;
+  stopButton.disabled = !running;
+  document.body.classList.toggle("session-running", running);
+}
+
+function updateModeLabel() {
+  const source = preferences.audio_source === "system_audio" ? "系统音频" : "麦克风";
+  const direction = preferences.source_language.startsWith("zh") ? "中→英" : "英→中";
+  modeLabel.textContent = `${source} · ${direction}`;
+}
+
+async function jsonRequest(url, options = {}) {
+  const response = await fetch(url, {
+    ...options,
+    headers: { "content-type": "application/json", ...(options.headers || {}) },
+  });
+  const body = response.status === 204 ? null : await response.json();
+  if (!response.ok) throw new Error(body?.error || `请求失败（${response.status}）`);
+  return body;
+}
+
+async function refreshOverlayState() {
+  try {
+    const state = await jsonRequest("/api/overlay/state");
+    preferences = state.preferences;
+    updateModeLabel();
+    setRunning(state.running);
+    if (state.running) statusLabel.textContent = "实时翻译中";
+  } catch (error) {
+    statusLabel.textContent = error.message;
+  }
+}
 
 function connect() {
   window.clearTimeout(reconnectTimer);
@@ -37,8 +80,7 @@ function handleEvent(event) {
   if (event.type === "caption") renderCaption(event);
   if (event.type === "session_status") {
     if (event.running && !sessionRunning) resetCaptions();
-    sessionRunning = event.running;
-    document.body.classList.toggle("session-running", event.running);
+    setRunning(event.running);
     statusLabel.textContent = event.message;
   }
   if (event.type === "error") statusLabel.textContent = event.message;
@@ -92,8 +134,7 @@ function cardForEvent(event) {
 
 function renderCaption(event) {
   if (!sessionRunning) {
-    sessionRunning = true;
-    document.body.classList.add("session-running");
+    setRunning(true);
     statusLabel.textContent = "实时翻译中";
   }
   const knownRevision = segmentVersions.get(event.segment_id) ?? -1;
@@ -134,4 +175,35 @@ function renderCaption(event) {
   if (event.state === "final" && event.segment_id === activeSegmentId) archiveCurrent();
 }
 
+startButton.addEventListener("click", async () => {
+  startButton.disabled = true;
+  statusLabel.textContent = "正在启动 Apple Speech…";
+  try {
+    const state = await jsonRequest("/api/overlay/state");
+    preferences = state.preferences;
+    updateModeLabel();
+    await jsonRequest("/api/session/start", {
+      method: "POST",
+      body: JSON.stringify(preferences),
+    });
+    setRunning(true);
+  } catch (error) {
+    setRunning(false);
+    statusLabel.textContent = error.message;
+  }
+});
+
+stopButton.addEventListener("click", async () => {
+  stopButton.disabled = true;
+  statusLabel.textContent = "正在结束当前句…";
+  try {
+    await jsonRequest("/api/session/stop", { method: "POST" });
+  } catch (error) {
+    setRunning(true);
+    statusLabel.textContent = error.message;
+  }
+});
+
+updateModeLabel();
+refreshOverlayState();
 connect();

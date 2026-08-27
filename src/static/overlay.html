@@ -12,7 +12,11 @@
       <header class="drag-bar" aria-label="拖动区域">
         <span class="live-dot"></span>
         <span id="overlay-status">正在连接实时翻译</span>
-        <span class="drag-hint">拖动移动</span>
+        <span class="mode-label" id="overlay-mode">麦克风 · 中→英</span>
+        <div class="overlay-controls" aria-label="翻译控制">
+          <button class="overlay-start" id="overlay-start" type="button">开始</button>
+          <button class="overlay-stop" id="overlay-stop" type="button" disabled>停止</button>
+        </div>
       </header>
       <section class="caption-stack" id="caption-stack" aria-live="polite">
         <article class="caption-card waiting" id="waiting-card">

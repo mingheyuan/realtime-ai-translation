@@ -53,6 +53,7 @@ struct AppStateInner {
     llm: LlmRefiner,
     events: broadcast::Sender<ServerEvent>,
     session: Mutex<Option<SessionHandle>>,
+    overlay_preferences: Mutex<StartSessionRequest>,
     context: Mutex<VecDeque<(String, String)>>,
     streaming: Mutex<TranslationStateMachine>,
 }
@@ -84,6 +85,11 @@ impl AppState {
                 llm,
                 events,
                 session: Mutex::new(None),
+                overlay_preferences: Mutex::new(StartSessionRequest {
+                    source_language: "zh-CN".to_owned(),
+                    target_language: "en-US".to_owned(),
+                    audio_source: crate::domain::AudioSource::Microphone,
+                }),
                 context: Mutex::new(VecDeque::with_capacity(4)),
                 streaming: Mutex::new(TranslationStateMachine::default()),
             }),
@@ -106,6 +112,7 @@ pub fn router(state: AppState) -> Router {
         .route("/ws", get(websocket))
         .route("/api/health", get(health))
         .route("/api/overlay/open", post(open_overlay))
+        .route("/api/overlay/state", get(overlay_state))
         .route("/api/session/start", post(start_session))
         .route("/api/session/stop", post(stop_session))
         .route(
@@ -180,7 +187,14 @@ struct OverlayResponse {
     opened: bool,
 }
 
-async fn open_overlay(State(state): State<AppState>) -> Result<Json<OverlayResponse>, ApiError> {
+async fn open_overlay(
+    State(state): State<AppState>,
+    request: Option<Json<StartSessionRequest>>,
+) -> Result<Json<OverlayResponse>, ApiError> {
+    if let Some(Json(request)) = request {
+        validate_direction(&request)?;
+        *state.inner.overlay_preferences.lock().await = request;
+    }
     let app_path = &state.inner.config.overlay_app_path;
     if !app_path.is_dir() {
         return Err(ApiError::service_unavailable(
@@ -211,6 +225,21 @@ async fn open_overlay(State(state): State<AppState>) -> Result<Json<OverlayRespo
 
     #[cfg(not(target_os = "macos"))]
     Err(ApiError::service_unavailable("悬浮字幕目前只支持 macOS"))
+}
+
+#[derive(Serialize)]
+struct OverlayStateResponse {
+    running: bool,
+    preferences: StartSessionRequest,
+}
+
+async fn overlay_state(State(state): State<AppState>) -> Json<OverlayStateResponse> {
+    let running = state.inner.session.lock().await.is_some();
+    let preferences = state.inner.overlay_preferences.lock().await.clone();
+    Json(OverlayStateResponse {
+        running,
+        preferences,
+    })
 }
 
 async fn websocket(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
@@ -255,6 +284,7 @@ async fn start_session(
     Json(request): Json<StartSessionRequest>,
 ) -> Result<Json<SessionResponse>, ApiError> {
     validate_direction(&request)?;
+    *state.inner.overlay_preferences.lock().await = request.clone();
     let hotwords = state.inner.dictionary.hotwords(&request.source_language)?;
     let mut session = state.inner.session.lock().await;
     if let Some(current) = session.as_ref() {
@@ -888,13 +918,43 @@ mod tests {
             .expect("overlay body");
         assert!(String::from_utf8_lossy(&overlay_body).contains("caption-stack"));
 
+        let overlay_state = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/overlay/state")
+                    .body(Body::empty())
+                    .expect("overlay state request"),
+            )
+            .await
+            .expect("overlay state response");
+        assert_eq!(overlay_state.status(), StatusCode::OK);
+        let overlay_state_body = to_bytes(overlay_state.into_body(), 64 * 1024)
+            .await
+            .expect("overlay state body");
+        let overlay_state_json: serde_json::Value =
+            serde_json::from_slice(&overlay_state_body).expect("overlay state JSON");
+        assert_eq!(overlay_state_json["running"], false);
+        assert_eq!(
+            overlay_state_json["preferences"]["audio_source"],
+            "microphone"
+        );
+
         let missing_overlay_app = app
             .clone()
             .oneshot(
                 Request::builder()
                     .method("POST")
                     .uri("/api/overlay/open")
-                    .body(Body::empty())
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "source_language": "en-US",
+                            "target_language": "zh-CN",
+                            "audio_source": "system_audio"
+                        })
+                        .to_string(),
+                    ))
                     .expect("open overlay request"),
             )
             .await
@@ -902,6 +962,27 @@ mod tests {
         assert_eq!(
             missing_overlay_app.status(),
             StatusCode::SERVICE_UNAVAILABLE
+        );
+
+        let updated_overlay_state = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/overlay/state")
+                    .body(Body::empty())
+                    .expect("updated overlay state request"),
+            )
+            .await
+            .expect("updated overlay state response");
+        let updated_overlay_state_body = to_bytes(updated_overlay_state.into_body(), 64 * 1024)
+            .await
+            .expect("updated overlay state body");
+        let updated_overlay_state_json: serde_json::Value =
+            serde_json::from_slice(&updated_overlay_state_body)
+                .expect("updated overlay state JSON");
+        assert_eq!(
+            updated_overlay_state_json["preferences"]["audio_source"],
+            "system_audio"
         );
 
         let entry = serde_json::json!({

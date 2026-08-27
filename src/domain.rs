@@ -65,7 +65,7 @@ impl AudioSource {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StartSessionRequest {
     pub source_language: String,
     pub target_language: String,

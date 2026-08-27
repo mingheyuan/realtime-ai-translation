@@ -4,6 +4,7 @@ import WebKit
 private let overlayWidth: CGFloat = 760
 private let overlayHeight: CGFloat = 286
 private let bottomMargin: CGFloat = 28
+private let frameAutosaveName = "RealtimeTranslationOverlayFrame"
 
 final class OverlayPanel: NSPanel {
     override var canBecomeKey: Bool { false }
@@ -29,7 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
 
         let panel = OverlayPanel(
             contentRect: NSRect(x: 0, y: 0, width: overlayWidth, height: overlayHeight),
-            styleMask: [.borderless, .nonactivatingPanel],
+            styleMask: [.borderless, .nonactivatingPanel, .resizable],
             backing: .buffered,
             defer: false
         )
@@ -41,6 +42,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         panel.isMovableByWindowBackground = false
+        panel.minSize = NSSize(width: 440, height: 180)
+        panel.maxSize = NSSize(width: 1_200, height: 640)
+        panel.isReleasedWhenClosed = false
 
         let container = NSView(frame: panel.contentView?.bounds ?? .zero)
         container.wantsLayer = true
@@ -58,7 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         container.addSubview(webView)
 
         let dragHandle = DragHandleView(
-            frame: NSRect(x: 34, y: overlayHeight - 27, width: overlayWidth - 92, height: 25)
+            frame: NSRect(x: 34, y: overlayHeight - 27, width: overlayWidth - 300, height: 25)
         )
         dragHandle.autoresizingMask = [.width, .minYMargin]
         container.addSubview(dragHandle)
@@ -77,7 +81,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         container.addSubview(closeButton)
 
         panel.contentView = container
-        position(panel)
+        if !panel.setFrameUsingName(frameAutosaveName) {
+            position(panel)
+        }
+        panel.setFrameAutosaveName(frameAutosaveName)
         self.panel = panel
         self.webView = webView
         panel.orderFrontRegardless()

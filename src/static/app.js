@@ -308,7 +308,14 @@ elements.stop.addEventListener("click", async () => {
 elements.overlayOpen.addEventListener("click", async () => {
   elements.overlayOpen.disabled = true;
   try {
-    await jsonRequest("/api/overlay/open", { method: "POST" });
+    await jsonRequest("/api/overlay/open", {
+      method: "POST",
+      body: JSON.stringify({
+        source_language: elements.source.value,
+        target_language: elements.target.value,
+        audio_source: elements.audioSource.value,
+      }),
+    });
     showToast("悬浮字幕已打开；可拖动到任意位置");
   } catch (error) {
     showToast(error.message, "error");
