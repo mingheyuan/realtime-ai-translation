@@ -29,10 +29,16 @@ impl SegmentManager {
         if text.is_empty() || text == self.latest_full_text {
             return None;
         }
+        // Apple Speech can briefly roll a cumulative hypothesis back to a
+        // shorter prefix after we have committed a sentence. That is not a new
+        // segment and must not push a duplicate transcript into history.
+        if !self.committed_prefix.is_empty() && self.committed_prefix.starts_with(text) {
+            return None;
+        }
         if !self.committed_prefix.is_empty() && !text.starts_with(&self.committed_prefix) {
+            // A genuinely unrelated hypothesis means Apple started a fresh
+            // recognition task. finalize() already advanced segment_id.
             self.committed_prefix.clear();
-            self.segment_id = self.segment_id.saturating_add(1);
-            self.revision = 0;
         }
         self.latest_full_text = text.to_owned();
         self.updated_at = Some(now);
@@ -129,6 +135,45 @@ mod tests {
             .expect("next segment");
         assert_eq!(next.source_text, "第二句");
         assert_eq!(next.segment_id, 2);
+    }
+
+    #[test]
+    fn a_shorter_cumulative_hypothesis_does_not_create_duplicate_history() {
+        let start = Instant::now();
+        let mut manager = SegmentManager::new(Duration::from_secs(1));
+        let committed = "This is the first sentence. This is the second sentence.";
+        manager.update(committed, start);
+        manager.finalize();
+
+        assert!(manager
+            .update(
+                "This is the first sentence.",
+                start + Duration::from_millis(100),
+            )
+            .is_none());
+        assert!(manager.finalize().is_none());
+        let next = manager
+            .update(
+                "This is the first sentence. This is the second sentence. New words",
+                start + Duration::from_millis(200),
+            )
+            .expect("new suffix");
+        assert_eq!(next.segment_id, 2);
+        assert_eq!(next.source_text, "New words");
+    }
+
+    #[test]
+    fn a_fresh_apple_recognition_task_uses_the_next_segment_id_once() {
+        let start = Instant::now();
+        let mut manager = SegmentManager::new(Duration::from_secs(1));
+        manager.update("First task text.", start);
+        manager.finalize();
+
+        let next = manager
+            .update("Fresh task text", start + Duration::from_millis(100))
+            .expect("fresh task");
+        assert_eq!(next.segment_id, 2);
+        assert_eq!(next.source_text, "Fresh task text");
     }
 
     #[test]

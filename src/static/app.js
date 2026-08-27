@@ -200,8 +200,8 @@ function captionForEvent(event) {
 
 function renderCaption(event) {
   // Keep one mutable current segment and one replaceable history segment.
-  // Late final results may still improve the visible history card, while an
-  // older segment can never replace either of the two newer cards.
+  // An archived segment is immutable, and an older segment can never replace
+  // either of the two newer cards.
   const knownRevision = segmentVersions.get(event.segment_id) ?? -1;
   if (knownRevision >= event.revision) return;
   segmentVersions.set(event.segment_id, event.revision);
