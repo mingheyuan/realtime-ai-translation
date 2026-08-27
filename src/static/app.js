@@ -179,19 +179,6 @@ function freezeHistoryCaption(article) {
   }
 }
 
-function applyFinalHistoryCorrection(article, event) {
-  if (event.state !== "final" || !event.translation_text.trim()) return;
-  article.dataset.originalSource = event.source_text;
-  article.dataset.originalTranslation = event.translation_text;
-  article.querySelector(".source").value = event.source_text;
-  article.querySelector(".translation").value = event.translation_text;
-  article.querySelector(".phase").textContent = event.llm_applied
-    ? "LLM 终稿"
-    : "最终译文";
-  autoResize(article.querySelector(".source"));
-  autoResize(article.querySelector(".translation"));
-}
-
 function captionForEvent(event) {
   if (event.segment_id === historySegmentId) {
     return elements.captions.querySelector(".caption-history");
@@ -223,7 +210,8 @@ function renderCaption(event) {
   const article = captionForEvent(event);
   if (!article) return;
   if (event.segment_id === historySegmentId) {
-    applyFinalHistoryCorrection(article, event);
+    // A history card is an immutable snapshot. Results that finish after the
+    // segment has moved upward must never change its text, size, or styling.
     return;
   }
   if (article.classList.contains("edited")) return;
