@@ -41,10 +41,36 @@ pub enum ServerEvent {
     DictionaryChanged,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AudioSource {
+    #[default]
+    Microphone,
+    SystemAudio,
+}
+
+impl AudioSource {
+    pub fn bridge_argument(self) -> &'static str {
+        match self {
+            Self::Microphone => "microphone",
+            Self::SystemAudio => "system_audio",
+        }
+    }
+
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::Microphone => "麦克风",
+            Self::SystemAudio => "系统音频",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct StartSessionRequest {
     pub source_language: String,
     pub target_language: String,
+    #[serde(default)]
+    pub audio_source: AudioSource,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -105,4 +131,33 @@ pub struct CorrectionRequest {
     pub corrected_translation: String,
     pub source_language: String,
     pub target_language: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_defaults_to_microphone_for_old_clients() {
+        let request: StartSessionRequest = serde_json::from_value(serde_json::json!({
+            "source_language": "zh-CN",
+            "target_language": "en-US"
+        }))
+        .expect("valid session request");
+
+        assert_eq!(request.audio_source, AudioSource::Microphone);
+    }
+
+    #[test]
+    fn session_accepts_system_audio() {
+        let request: StartSessionRequest = serde_json::from_value(serde_json::json!({
+            "source_language": "en-US",
+            "target_language": "zh-CN",
+            "audio_source": "system_audio"
+        }))
+        .expect("valid system audio request");
+
+        assert_eq!(request.audio_source, AudioSource::SystemAudio);
+        assert_eq!(request.audio_source.bridge_argument(), "system_audio");
+    }
 }

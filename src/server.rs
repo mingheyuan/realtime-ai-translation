@@ -247,6 +247,7 @@ async fn run_session(
     let mut bridge = match AppleSpeechBridge::spawn(
         &state.inner.config.speech_bridge_path,
         &request.source_language,
+        request.audio_source,
         &hotwords,
     ) {
         Ok(bridge) => bridge,
@@ -269,7 +270,10 @@ async fn run_session(
     let mut last_preview = Instant::now() - Duration::from_secs(1);
     state.emit(ServerEvent::SessionStatus {
         running: true,
-        message: "正在等待 Apple Speech".to_owned(),
+        message: format!(
+            "正在等待 Apple Speech（{}）",
+            request.audio_source.description()
+        ),
     });
 
     loop {
@@ -288,7 +292,10 @@ async fn run_session(
                     Ok(AsrEvent::Ready { locale }) => {
                         state.emit(ServerEvent::SessionStatus {
                             running: true,
-                            message: format!("Apple Speech 已就绪：{locale}"),
+                            message: format!(
+                                "Apple Speech 已就绪：{locale} · {}",
+                                request.audio_source.description()
+                            ),
                         });
                     }
                     Ok(AsrEvent::Partial { text }) => {
@@ -646,6 +653,7 @@ mod tests {
         let request = StartSessionRequest {
             source_language: "zh-CN".to_owned(),
             target_language: "en-US".to_owned(),
+            audio_source: crate::domain::AudioSource::Microphone,
         };
 
         process_snapshot(

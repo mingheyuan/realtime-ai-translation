@@ -14,6 +14,7 @@
     <string>实时翻译需要使用麦克风采集语音。</string>
     <key>NSSpeechRecognitionUsageDescription</key>
     <string>实时翻译需要使用 Apple Speech 将语音转换成文字。</string>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>实时翻译需要捕获系统音频，以识别视频通话中对方的声音。</string>
 </dict>
 </plist>
-

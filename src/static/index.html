@@ -27,6 +27,13 @@
         <section class="control-card">
           <div class="direction">
             <label>
+              <span>音频来源</span>
+              <select id="audio-source">
+                <option value="microphone">麦克风（自己的声音）</option>
+                <option value="system_audio">系统音频（通话对方）</option>
+              </select>
+            </label>
+            <label>
               <span>听写语言</span>
               <select id="source-language">
                 <option value="zh-CN">中文（简体）</option>
@@ -51,6 +58,9 @@
             <button class="secondary" id="dictionary-toggle" type="button">个人词典</button>
             <div class="session-status" id="session-status">准备就绪</div>
           </div>
+          <p class="audio-source-hint" id="audio-source-hint">
+            麦克风模式识别你说的话；首次使用需要授予麦克风和语音识别权限。
+          </p>
         </section>
 
         <section class="pipeline" aria-label="处理流程">
@@ -80,7 +90,7 @@
           </div>
           <div class="empty-state" id="empty-state">
             <div class="wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
-            <strong>点击“开始实时翻译”后说话</strong>
+            <strong>选择音频来源后开始实时翻译</strong>
             <span>原文会先出现，快速译文随后覆盖，LLM 终稿最后锁定。</span>
           </div>
           <div class="captions" id="captions" aria-live="polite"></div>

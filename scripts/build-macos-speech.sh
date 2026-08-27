@@ -11,6 +11,8 @@ swiftc \
   "$project_dir/bridges/macos-speech/MacOSSpeechBridge.swift" \
   -module-cache-path "$module_cache" \
   -framework AVFoundation \
+  -framework CoreMedia \
+  -framework ScreenCaptureKit \
   -framework Speech \
   -Xlinker -sectcreate \
   -Xlinker __TEXT \

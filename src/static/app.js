@@ -4,6 +4,8 @@ const elements = {
   start: document.querySelector("#start"),
   stop: document.querySelector("#stop"),
   swap: document.querySelector("#swap"),
+  audioSource: document.querySelector("#audio-source"),
+  audioSourceHint: document.querySelector("#audio-source-hint"),
   source: document.querySelector("#source-language"),
   target: document.querySelector("#target-language"),
   status: document.querySelector("#session-status"),
@@ -32,6 +34,7 @@ function setRunning(running) {
   elements.stop.disabled = !running;
   elements.source.disabled = running;
   elements.target.disabled = running;
+  elements.audioSource.disabled = running;
   elements.swap.disabled = running;
   document.body.classList.toggle("recording", running);
 }
@@ -41,6 +44,7 @@ function setStopping() {
   elements.stop.disabled = true;
   elements.source.disabled = true;
   elements.target.disabled = true;
+  elements.audioSource.disabled = true;
   elements.swap.disabled = true;
   document.body.classList.remove("recording");
 }
@@ -205,6 +209,7 @@ elements.start.addEventListener("click", async () => {
       body: JSON.stringify({
         source_language: elements.source.value,
         target_language: elements.target.value,
+        audio_source: elements.audioSource.value,
       }),
     });
     setRunning(response.running);
@@ -241,6 +246,13 @@ elements.target.addEventListener("change", () => {
   if (elements.source.value === elements.target.value) {
     elements.source.value = otherLocale(elements.target.value);
   }
+});
+
+elements.audioSource.addEventListener("change", () => {
+  const systemAudio = elements.audioSource.value === "system_audio";
+  elements.audioSourceHint.textContent = systemAudio
+    ? "系统音频模式识别视频通话、播放器等应用的声音；首次使用需要授予屏幕与系统音频录制权限。"
+    : "麦克风模式识别你说的话；首次使用需要授予麦克风和语音识别权限。";
 });
 
 function setDictionaryOpen(open) {

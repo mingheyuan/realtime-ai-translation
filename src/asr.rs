@@ -8,6 +8,8 @@ use tokio::{
     time::{timeout, Duration},
 };
 
+use crate::domain::AudioSource;
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AsrEvent {
@@ -41,6 +43,7 @@ impl AppleSpeechBridge {
     pub fn spawn(
         executable: &Path,
         source_language: &str,
+        audio_source: AudioSource,
         hotwords: &[String],
     ) -> Result<Self, AsrError> {
         if !executable.is_file() {
@@ -51,6 +54,8 @@ impl AppleSpeechBridge {
         command
             .arg("--locale")
             .arg(locale)
+            .arg("--audio-source")
+            .arg(audio_source.bridge_argument())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())

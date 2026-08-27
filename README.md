@@ -9,7 +9,7 @@ macOS 上的中英双向实时语音翻译 MVP。它沿用 Saymore 值得借鉴�
 ## 实际处理流程
 
 ```text
-麦克风
+麦克风（自己的声音）或 ScreenCaptureKit 系统音频（通话对方）
   ↓
 Apple Speech（partial / final + contextualStrings 热词）
   ↓
@@ -32,6 +32,7 @@ Segment Manager（segment_id + revision）
 ## 当前功能
 
 - Apple Speech 中英文流式 `partial` / `final` 识别。
+- 音频来源可选择麦克风或系统音频；系统音频可识别视频通话、播放器等应用播放的声音。
 - SQLite 双语个人词典。
 - 词典术语和别名作为 Apple `contextualStrings` 热词。
 - ASR 后确定性别名纠正和 MarianMT glossary 约束。
@@ -48,9 +49,10 @@ Segment Manager（segment_id + revision）
 - Xcode Command Line Tools（需要 `swiftc` 和 `codesign`）。
 - Rust stable。
 - Python 3.9 或更高版本。
-- 首次启动时授予“麦克风”和“语音识别”权限。
+- 首次使用麦克风时授予“麦克风”和“语音识别”权限。
+- 首次使用系统音频时授予“屏幕与系统音频录制”权限。
 
-如果之前拒绝过权限，请在“系统设置 → 隐私与安全性 → 麦克风 / 语音识别”中启用启动本项目所用的终端或应用，然后重新开始会话。
+如果之前拒绝过权限，请在“系统设置 → 隐私与安全性 → 麦克风 / 语音识别 / 屏幕与系统音频录制”中启用启动本项目所用的终端或应用。系统音频权限变更后通常需要重启该终端或应用，再重新开始会话。
 
 ## 启动
 
@@ -62,7 +64,13 @@ Segment Manager（segment_id + revision）
 cargo run
 ```
 
-打开 <http://127.0.0.1:8765>，选择翻译方向并点击“开始实时翻译”。
+打开 <http://127.0.0.1:8765>，选择音频来源和翻译方向，再点击“开始实时翻译”。
+
+### 识别视频通话声音
+
+选择“系统音频（通话对方）”后，macOS ScreenCaptureKit 会采集当前系统播放的声音并送入 Apple Speech。它适用于 Zoom、Teams、腾讯会议、FaceTime 和浏览器通话等场景，不要求把声音外放给麦克风。
+
+当前系统音频模式采集当前显示器范围内所有应用的播放声音，并排除本程序自身音频。为避免字幕混入通知声或其他播放器，通话期间请关闭无关音频。当前一次会话只选择一个来源；如需同时区分自己与对方，需要后续增加双 ASR 通道和说话方标记，不能简单把两路声音混给同一个识别任务。
 
 MarianMT 权重在第一次使用某个翻译方向时从 Hugging Face 下载。只想先查看界面和测试词典时，可以跳过 Python 模型安装：
 
@@ -122,6 +130,7 @@ python3 -m py_compile model-worker/worker.py
 
 - 仅支持中文和英文。
 - Web UI 是本机服务，不是已签名的 `.app` 安装包。
+- 系统音频当前按显示器采集，不提供单个通话应用/窗口选择；一次会话也不能同时分离麦克风与系统音频。
 - Apple Speech 的可用性和离线能力取决于系统、语言包与 macOS。
 - MarianMT 首次加载和第一次推理明显慢于后续请求；CPU 内存占用取决于 PyTorch 和已加载的模型方向。
 - 已经播放出去的 TTS 无法像字幕一样撤回，因此 MVP 暂不自动朗读。

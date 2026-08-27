@@ -1,5 +1,7 @@
 import AVFoundation
+import CoreMedia
 import Foundation
+import ScreenCaptureKit
 import Speech
 
 private let outputLock = NSLock()
@@ -52,6 +54,11 @@ private func authorizeMicrophone() -> Bool {
     default:
         return false
     }
+}
+
+private enum AudioSource: String {
+    case microphone
+    case systemAudio = "system_audio"
 }
 
 private final class RecognitionController {
@@ -189,10 +196,147 @@ private final class RecognitionController {
     }
 }
 
+private final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
+    private let controller: RecognitionController
+    private let sampleQueue = DispatchQueue(
+        label: "realtime-translation.system-audio",
+        qos: .userInitiated
+    )
+    private let stateLock = NSLock()
+    private var stream: SCStream?
+    private var stopping = false
+
+    init(controller: RecognitionController) {
+        self.controller = controller
+    }
+
+    func start(completion: @escaping (Error?) -> Void) {
+        SCShareableContent.getExcludingDesktopWindows(
+            false,
+            onScreenWindowsOnly: false
+        ) { [weak self] content, error in
+            guard let self else { return }
+            if let error {
+                completion(error)
+                return
+            }
+            guard let display = content?.displays.first else {
+                completion(SystemAudioError.noDisplay)
+                return
+            }
+
+            let filter = SCContentFilter(
+                display: display,
+                excludingApplications: [],
+                exceptingWindows: []
+            )
+            let configuration = SCStreamConfiguration()
+            configuration.capturesAudio = true
+            configuration.excludesCurrentProcessAudio = true
+            configuration.sampleRate = 48_000
+            configuration.channelCount = 1
+            // No screen frames are consumed, but keeping the configured surface
+            // tiny avoids unnecessary WindowServer work for an audio-only stream.
+            configuration.width = 2
+            configuration.height = 2
+            configuration.minimumFrameInterval = CMTime(value: 1, timescale: 1)
+            configuration.queueDepth = 3
+
+            let nextStream = SCStream(
+                filter: filter,
+                configuration: configuration,
+                delegate: self
+            )
+            do {
+                try nextStream.addStreamOutput(
+                    self,
+                    type: .audio,
+                    sampleHandlerQueue: self.sampleQueue
+                )
+            } catch {
+                completion(error)
+                return
+            }
+
+            self.stateLock.lock()
+            self.stream = nextStream
+            let shouldStop = self.stopping
+            self.stateLock.unlock()
+            if shouldStop {
+                nextStream.stopCapture()
+                completion(SystemAudioError.stoppedBeforeStart)
+                return
+            }
+            nextStream.startCapture { error in
+                completion(error)
+            }
+        }
+    }
+
+    func stop() {
+        stateLock.lock()
+        stopping = true
+        let activeStream = stream
+        stream = nil
+        stateLock.unlock()
+        activeStream?.stopCapture()
+    }
+
+    func stream(
+        _ stream: SCStream,
+        didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
+        of outputType: SCStreamOutputType
+    ) {
+        guard outputType == .audio, sampleBuffer.isValid else { return }
+        try? sampleBuffer.withAudioBufferList { audioBufferList, _ in
+            guard let description = sampleBuffer.formatDescription?.audioStreamBasicDescription,
+                  let format = AVAudioFormat(
+                    standardFormatWithSampleRate: description.mSampleRate,
+                    channels: description.mChannelsPerFrame
+                  ),
+                  let samples = AVAudioPCMBuffer(
+                    pcmFormat: format,
+                    bufferListNoCopy: audioBufferList.unsafePointer
+                  ) else {
+                return
+            }
+            controller.append(samples)
+        }
+    }
+
+    func stream(_ stream: SCStream, didStopWithError error: Error) {
+        stateLock.lock()
+        let wasStopping = stopping
+        self.stream = nil
+        stateLock.unlock()
+        if !wasStopping {
+            emit(["type": "error", "message": "System audio capture stopped: \(error.localizedDescription)"])
+        }
+    }
+}
+
+private enum SystemAudioError: LocalizedError {
+    case noDisplay
+    case stoppedBeforeStart
+
+    var errorDescription: String? {
+        switch self {
+        case .noDisplay:
+            return "No display is available for system audio capture"
+        case .stoppedBeforeStart:
+            return "System audio capture was stopped before it started"
+        }
+    }
+}
+
 let localeIdentifier = argumentValues(named: "--locale").first ?? "zh-CN"
 let contextualTerms = argumentValues(named: "--term")
+let audioSourceValue = argumentValues(named: "--audio-source").first ?? "microphone"
+guard let audioSource = AudioSource(rawValue: audioSourceValue) else {
+    fail("Unsupported audio source: \(audioSourceValue)")
+}
 
-guard authorizeMicrophone() else {
+if audioSource == .microphone, !authorizeMicrophone() {
     fail(
         "Microphone permission was not granted. Open System Settings > Privacy & Security > Microphone and enable the app used to launch Realtime AI Translation."
     )
@@ -222,33 +366,53 @@ guard recognizer.isAvailable else {
     fail("Apple Speech is currently unavailable")
 }
 
-let engine = AVAudioEngine()
 private let controller = RecognitionController(
     recognizer: recognizer,
     contextualTerms: contextualTerms
 )
-let input = engine.inputNode
-let format = input.outputFormat(forBus: 0)
-input.installTap(onBus: 0, bufferSize: 1_024, format: format) { buffer, _ in
-    controller.append(buffer)
-}
-
 controller.start()
-do {
-    engine.prepare()
-    try engine.start()
-} catch {
-    controller.stop()
-    fail("Microphone capture failed: \(error.localizedDescription)")
-}
+private var microphoneEngine: AVAudioEngine?
+private var microphoneInput: AVAudioInputNode?
+private var systemAudioCapture: SystemAudioCapture?
 
-emit(["type": "ready", "locale": localeIdentifier])
+switch audioSource {
+case .microphone:
+    let engine = AVAudioEngine()
+    let input = engine.inputNode
+    let format = input.outputFormat(forBus: 0)
+    input.installTap(onBus: 0, bufferSize: 1_024, format: format) { buffer, _ in
+        controller.append(buffer)
+    }
+    do {
+        engine.prepare()
+        try engine.start()
+        microphoneEngine = engine
+        microphoneInput = input
+        emit(["type": "ready", "locale": localeIdentifier])
+    } catch {
+        controller.stop()
+        fail("Microphone capture failed: \(error.localizedDescription)")
+    }
+case .systemAudio:
+    let capture = SystemAudioCapture(controller: controller)
+    systemAudioCapture = capture
+    capture.start { error in
+        if let error {
+            controller.stop()
+            fail(
+                "System audio capture failed: \(error.localizedDescription). Open System Settings > Privacy & Security > Screen & System Audio Recording, enable the app used to launch Realtime AI Translation, then restart it."
+            )
+        }
+        emit(["type": "ready", "locale": localeIdentifier])
+    }
+}
 
 DispatchQueue.global(qos: .userInitiated).async {
     while let command = readLine() {
         if command.trimmingCharacters(in: .whitespacesAndNewlines) == "stop" {
-            engine.stop()
-            input.removeTap(onBus: 0)
+            microphoneEngine?.stop()
+            microphoneInput?.removeTap(onBus: 0)
+            systemAudioCapture?.stop()
             controller.stop()
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
                 exit(0)
