@@ -23,6 +23,7 @@ const elements = {
 let socket;
 let reconnectTimer;
 let sessionActive = false;
+let activeSegmentId = null;
 const segmentVersions = new Map();
 
 function otherLocale(locale) {
@@ -93,6 +94,7 @@ function handleEvent(event) {
   if (event.type === "session_status") {
     if (event.running && !sessionActive) {
       sessionActive = true;
+      activeSegmentId = null;
       segmentVersions.clear();
       elements.captions.replaceChildren();
       elements.empty.hidden = false;
@@ -143,17 +145,26 @@ function captionTemplate(event) {
 }
 
 function renderCaption(event) {
+  // The backend keeps sentence-sized segments for context and ordering, while
+  // the live UI deliberately reuses one caption card. Once a newer segment is
+  // visible, late results from an older segment must never reclaim the card.
+  if (activeSegmentId !== null && event.segment_id < activeSegmentId) return;
   const knownRevision = segmentVersions.get(event.segment_id) ?? -1;
   if (knownRevision >= event.revision) return;
   segmentVersions.set(event.segment_id, event.revision);
   elements.empty.hidden = true;
 
-  let article = elements.captions.querySelector(
-    `[data-segment="${event.segment_id}"]`,
-  );
+  const startsNewSegment =
+    activeSegmentId === null || event.segment_id > activeSegmentId;
+  let article = elements.captions.querySelector(".caption");
   if (!article) {
     article = captionTemplate(event);
-    elements.captions.prepend(article);
+    elements.captions.append(article);
+  }
+  if (startsNewSegment) {
+    activeSegmentId = event.segment_id;
+    article.dataset.segment = event.segment_id;
+    article.classList.remove("edited");
   }
   if (article.classList.contains("edited")) return;
 
