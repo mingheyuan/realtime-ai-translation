@@ -110,6 +110,19 @@ cargo run
 
 `RT_TRANSLATION_LLM_BASE_URL` 也可以指向本地的 Ollama、LM Studio 或其他兼容服务。程序调用 `/chat/completions`，要求模型只返回翻译结果。
 
+项目启动时会自动读取根目录的 `.env.local`，且真实配置已被 Git 忽略。可以复制 `.env.example` 后填写本机 key。使用 DeepSeek 快速非思考模式时推荐：
+
+```dotenv
+RT_TRANSLATION_LLM_ENABLED=1
+RT_TRANSLATION_LLM_BASE_URL=https://api.deepseek.com
+RT_TRANSLATION_LLM_API_KEY=your-key
+RT_TRANSLATION_LLM_MODEL=deepseek-v4-flash
+RT_TRANSLATION_LLM_THINKING_DISABLED=1
+RT_TRANSLATION_LLM_TIMEOUT=12
+```
+
+`RT_TRANSLATION_LLM_THINKING_DISABLED=1` 会在 Chat Completions 请求中发送 `{"thinking":{"type":"disabled"}}`，避免实时字幕等待默认思考过程。
+
 ## 个人词典如何生效
 
 每条词典项包含源词、固定译法、ASR 别名、语言方向和领域：

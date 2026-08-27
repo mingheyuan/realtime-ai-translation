@@ -857,6 +857,7 @@ mod tests {
                 api_key: String::new(),
                 model: String::new(),
                 timeout_seconds: 1,
+                thinking_disabled: false,
             },
         })
         .expect("test app state");

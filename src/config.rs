@@ -1,4 +1,9 @@
-use std::{env, net::SocketAddr, path::PathBuf};
+use std::{
+    env, fs,
+    io::ErrorKind,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+};
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {
@@ -19,11 +24,13 @@ pub struct LlmConfig {
     pub api_key: String,
     pub model: String,
     pub timeout_seconds: u64,
+    pub thinking_disabled: bool,
 }
 
 impl AppConfig {
     pub fn from_env() -> anyhow::Result<Self> {
         let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        load_local_env(&manifest_dir.join(".env.local"))?;
         let listen = env::var("RT_TRANSLATION_LISTEN")
             .unwrap_or_else(|_| "127.0.0.1:8765".to_owned())
             .parse()?;
@@ -54,6 +61,7 @@ impl AppConfig {
                 .ok()
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(20),
+            thinking_disabled: env_bool("RT_TRANSLATION_LLM_THINKING_DISABLED", false),
         };
         Ok(Self {
             listen,
@@ -68,6 +76,47 @@ impl AppConfig {
     }
 }
 
+fn load_local_env(path: &Path) -> anyhow::Result<()> {
+    let contents = match fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    for (line_number, line) in contents.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((name, value)) = line.split_once('=') else {
+            anyhow::bail!("invalid .env.local entry on line {}", line_number + 1);
+        };
+        let name = name.trim();
+        if name.is_empty()
+            || !name
+                .chars()
+                .all(|character| character == '_' || character.is_ascii_alphanumeric())
+        {
+            anyhow::bail!("invalid .env.local variable on line {}", line_number + 1);
+        }
+        // Explicit process environment always wins over the local file.
+        if env::var_os(name).is_none() {
+            env::set_var(name, unquote(value.trim()));
+        }
+    }
+    Ok(())
+}
+
+fn unquote(value: &str) -> &str {
+    if value.len() >= 2
+        && ((value.starts_with('"') && value.ends_with('"'))
+            || (value.starts_with('\'') && value.ends_with('\'')))
+    {
+        &value[1..value.len() - 1]
+    } else {
+        value
+    }
+}
+
 fn env_bool(name: &str, default: bool) -> bool {
     env::var(name)
         .ok()
@@ -78,4 +127,16 @@ fn env_bool(name: &str, default: bool) -> bool {
             )
         })
         .unwrap_or(default)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unquotes_local_values() {
+        assert_eq!(unquote("plain"), "plain");
+        assert_eq!(unquote("\"quoted\""), "quoted");
+        assert_eq!(unquote("'single'"), "single");
+    }
 }

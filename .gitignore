@@ -1,5 +1,6 @@
 .DS_Store
 .env
+.env.local
 .pytest_cache/
 .venv/
 __pycache__/
@@ -8,4 +9,3 @@ data/
 dist/
 target/
 model-worker/.cache/
-

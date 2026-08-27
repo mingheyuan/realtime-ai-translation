@@ -66,6 +66,10 @@ impl LlmRefiner {
         let request = ChatRequest {
             model: self.config.model.clone(),
             temperature: 0.0,
+            thinking: self
+                .config
+                .thinking_disabled
+                .then_some(ThinkingConfig { r#type: "disabled" }),
             messages: vec![
                 ChatMessage {
                     role: "system",
@@ -108,7 +112,14 @@ impl LlmRefiner {
 struct ChatRequest<'a> {
     model: String,
     temperature: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thinking: Option<ThinkingConfig<'a>>,
     messages: Vec<ChatMessage<'a>>,
+}
+
+#[derive(Serialize)]
+struct ThinkingConfig<'a> {
+    r#type: &'a str,
 }
 
 #[derive(Serialize)]
@@ -146,6 +157,7 @@ mod tests {
             api_key: String::new(),
             model: String::new(),
             timeout_seconds: 1,
+            thinking_disabled: false,
         })
         .expect("client");
         let output = refiner
@@ -183,6 +195,7 @@ mod tests {
             api_key: "test-key".to_owned(),
             model: "test-model".to_owned(),
             timeout_seconds: 2,
+            thinking_disabled: false,
         })
         .expect("client");
 
@@ -201,5 +214,17 @@ mod tests {
 
         assert_eq!(output.text, "This is the polished final translation.");
         assert!(output.applied);
+    }
+
+    #[test]
+    fn fast_model_request_can_disable_thinking() {
+        let request = ChatRequest {
+            model: "deepseek-v4-flash".to_owned(),
+            temperature: 0.0,
+            thinking: Some(ThinkingConfig { r#type: "disabled" }),
+            messages: Vec::new(),
+        };
+        let payload = serde_json::to_value(request).expect("serialize request");
+        assert_eq!(payload["thinking"]["type"], "disabled");
     }
 }
