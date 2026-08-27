@@ -20,5 +20,12 @@ swiftc \
   -framework Speech \
   -o "$output_path"
 
-codesign --force --deep --sign - "$app_path"
+codesign_identity="${RT_TRANSLATION_CODESIGN_IDENTITY:-Realtime Translation Local Code Signing}"
+if security find-identity -v -p codesigning | grep -Fq "\"$codesign_identity\""; then
+  codesign --force --deep --sign "$codesign_identity" "$app_path"
+else
+  echo "warning: stable signing identity '$codesign_identity' was not found" >&2
+  echo "warning: run scripts/setup-macos-codesigning.sh before granting macOS permissions" >&2
+  codesign --force --deep --sign - "$app_path"
+fi
 echo "Built $app_path"

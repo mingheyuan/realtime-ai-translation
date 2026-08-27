@@ -81,11 +81,14 @@ MarianMT 本身不是流式模型，不能安全地只翻译 ASR 新增的几个
 克隆后在项目目录执行：
 
 ```bash
+./scripts/setup-macos-codesigning.sh
 ./scripts/build-macos-speech.sh
 ./scripts/build-macos-overlay.sh
 ./scripts/setup-models.sh
 cargo run
 ```
+
+`setup-macos-codesigning.sh` 会在当前用户的登录钥匙串中创建项目专用的稳定签名身份，证书和私钥不会写入仓库。稳定签名可避免每次重编译 Apple Speech 桥接后，语音识别和屏幕录制权限因 ad-hoc 签名哈希变化而失效。首次切换到稳定签名后仍需重新授权一次。
 
 打开 <http://127.0.0.1:8765>，选择音频来源和翻译方向，再点击“开始实时翻译”。点击“悬浮字幕”会打开一个不占 Dock、半透明、始终置顶的原生字幕窗口；窗口内可以直接切换麦克风/系统音频和中英方向，也可以开始或停止翻译。拖动顶部可以移动，拖动右下角的原生缩放手柄可以调整大小，位置和尺寸会自动记忆，点右上角 `×` 关闭。它和主界面读取同一个 WebSocket，不会启动第二套 ASR 或翻译任务。
 
@@ -173,7 +176,7 @@ python3 -m py_compile model-worker/worker.py
 ## 当前限制
 
 - 仅支持中文和英文。
-- 主控制台仍是本机 Web UI；悬浮字幕是临时签名的本机 `.app` 辅助组件，尚未打包为可分发安装程序。
+- 主控制台仍是本机 Web UI；两个原生 `.app` 辅助组件尚未打包为可分发安装程序。Speech Bridge 推荐使用项目生成的本地稳定签名。
 - 系统音频当前按显示器采集，不提供单个通话应用/窗口选择；一次会话也不能同时分离麦克风与系统音频。
 - Apple Speech 的可用性和离线能力取决于系统、语言包与 macOS。
 - MarianMT 首次加载和第一次推理明显慢于后续请求；CPU 内存占用取决于 PyTorch 和已加载的模型方向。
