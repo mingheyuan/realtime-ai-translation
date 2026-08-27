@@ -6,6 +6,7 @@ use crate::domain::{CaptionState, SegmentSnapshot};
 pub struct SegmentManager {
     committed_prefix: String,
     latest_full_text: String,
+    current_segment_text: String,
     segment_id: u64,
     revision: u64,
     updated_at: Option<Instant>,
@@ -17,6 +18,7 @@ impl SegmentManager {
         Self {
             committed_prefix: String::new(),
             latest_full_text: String::new(),
+            current_segment_text: String::new(),
             segment_id: 1,
             revision: 0,
             updated_at: None,
@@ -35,14 +37,22 @@ impl SegmentManager {
         if !self.committed_prefix.is_empty() && self.committed_prefix.starts_with(text) {
             return None;
         }
-        if !self.committed_prefix.is_empty() && !text.starts_with(&self.committed_prefix) {
+        let current = if self.committed_prefix.is_empty() {
+            text
+        } else if let Some(suffix) = text.strip_prefix(&self.committed_prefix) {
+            suffix.trim()
+        } else if let Some(boundary) = aligned_committed_boundary(&self.committed_prefix, text) {
+            text[boundary..].trim_start_matches(is_segment_separator)
+        } else {
             // A genuinely unrelated hypothesis means Apple started a fresh
             // recognition task. finalize() already advanced segment_id.
             self.committed_prefix.clear();
-        }
+            text
+        };
         self.latest_full_text = text.to_owned();
         self.updated_at = Some(now);
-        let current = self.current_text().to_owned();
+        self.current_segment_text = current.to_owned();
+        let current = self.current_segment_text.clone();
         if current.is_empty() {
             return None;
         }
@@ -54,30 +64,24 @@ impl SegmentManager {
         let Some(updated_at) = self.updated_at else {
             return false;
         };
-        !self.current_text().is_empty()
+        !self.current_segment_text.is_empty()
             && (now.saturating_duration_since(updated_at) >= self.idle_timeout
-                || ends_sentence(self.current_text()))
+                || ends_sentence(&self.current_segment_text))
     }
 
     pub fn finalize(&mut self) -> Option<SegmentSnapshot> {
-        let current = self.current_text().to_owned();
+        let current = self.current_segment_text.clone();
         if current.is_empty() {
             return None;
         }
         self.revision = self.revision.saturating_add(1);
         let snapshot = self.snapshot(CaptionState::Final, &current);
         self.committed_prefix = self.latest_full_text.clone();
+        self.current_segment_text.clear();
         self.segment_id = self.segment_id.saturating_add(1);
         self.revision = 0;
         self.updated_at = None;
         Some(snapshot)
-    }
-
-    fn current_text(&self) -> &str {
-        self.latest_full_text
-            .strip_prefix(&self.committed_prefix)
-            .unwrap_or(&self.latest_full_text)
-            .trim()
     }
 
     fn snapshot(&self, state: CaptionState, text: &str) -> SegmentSnapshot {
@@ -88,6 +92,111 @@ impl SegmentManager {
             source_text: text.to_owned(),
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TranscriptToken {
+    normalized: String,
+    end: usize,
+}
+
+fn aligned_committed_boundary(committed: &str, revised: &str) -> Option<usize> {
+    let committed_tokens = transcript_tokens(committed);
+    let revised_tokens = transcript_tokens(revised);
+    if committed_tokens.len() < 6 || revised_tokens.len() < 6 {
+        return None;
+    }
+
+    let committed_head = &committed_tokens[..committed_tokens.len().min(12)];
+    let revised_head = &revised_tokens[..revised_tokens.len().min(16)];
+    if lcs_len(committed_head, revised_head) < 4 {
+        return None;
+    }
+
+    for skipped_tail in 0..=4.min(committed_tokens.len().saturating_sub(3)) {
+        let committed_end = committed_tokens.len() - skipped_tail;
+        let maximum_anchor = committed_end.min(8);
+        for anchor_len in (3..=maximum_anchor).rev() {
+            let anchor = &committed_tokens[committed_end - anchor_len..committed_end];
+            let Some(revised_end) = last_token_sequence_end(&revised_tokens, anchor) else {
+                continue;
+            };
+            let estimated_boundary = (revised_end + skipped_tail).min(revised_tokens.len());
+            return Some(revised_tokens[estimated_boundary - 1].end);
+        }
+    }
+    None
+}
+
+fn transcript_tokens(text: &str) -> Vec<TranscriptToken> {
+    let mut tokens = Vec::new();
+    let mut ascii_start = None;
+    for (index, character) in text.char_indices() {
+        if character.is_ascii_alphanumeric() || (character == '\'' && ascii_start.is_some()) {
+            ascii_start.get_or_insert(index);
+            continue;
+        }
+        if let Some(start) = ascii_start.take() {
+            tokens.push(TranscriptToken {
+                normalized: text[start..index].to_ascii_lowercase(),
+                end: index,
+            });
+        }
+        if character.is_alphanumeric() {
+            tokens.push(TranscriptToken {
+                normalized: character.to_lowercase().collect(),
+                end: index + character.len_utf8(),
+            });
+        }
+    }
+    if let Some(start) = ascii_start {
+        tokens.push(TranscriptToken {
+            normalized: text[start..].to_ascii_lowercase(),
+            end: text.len(),
+        });
+    }
+    tokens
+}
+
+fn lcs_len(left: &[TranscriptToken], right: &[TranscriptToken]) -> usize {
+    let mut previous = vec![0; right.len() + 1];
+    for left_token in left {
+        let mut current = vec![0; right.len() + 1];
+        for (right_index, right_token) in right.iter().enumerate() {
+            current[right_index + 1] = if left_token.normalized == right_token.normalized {
+                previous[right_index] + 1
+            } else {
+                current[right_index].max(previous[right_index + 1])
+            };
+        }
+        previous = current;
+    }
+    previous[right.len()]
+}
+
+fn last_token_sequence_end(
+    tokens: &[TranscriptToken],
+    anchor: &[TranscriptToken],
+) -> Option<usize> {
+    tokens
+        .windows(anchor.len())
+        .enumerate()
+        .filter(|(_, window)| {
+            window
+                .iter()
+                .zip(anchor)
+                .all(|(left, right)| left.normalized == right.normalized)
+        })
+        .map(|(start, _)| start + anchor.len())
+        .next_back()
+}
+
+fn is_segment_separator(character: char) -> bool {
+    character.is_whitespace()
+        || matches!(
+            character,
+            ',' | '.' | '!' | '?' | ';' | ':' | '，' | '。' | '！' | '？' | '；' | '：' | '…'
+        )
 }
 
 fn ends_sentence(text: &str) -> bool {
@@ -174,6 +283,22 @@ mod tests {
             .expect("fresh task");
         assert_eq!(next.segment_id, 2);
         assert_eq!(next.source_text, "Fresh task text");
+    }
+
+    #[test]
+    fn apple_word_corrections_align_to_the_committed_tail() {
+        let start = Instant::now();
+        let mut manager = SegmentManager::new(Duration::from_secs(1));
+        let committed = "Let's see if you know how in your CS 107 withdrew all these memory diagrams, and like here's the heap and the archived caption must remain exactly the same.";
+        manager.update(committed, start);
+        manager.finalize();
+
+        let revised = "Let's see if you know how in your CS 107 drew all these memory diagrams and like here's the heap the first caption must remain exactly the same. New words belong to the current segment";
+        let next = manager
+            .update(revised, start + Duration::from_millis(100))
+            .expect("aligned suffix");
+        assert_eq!(next.segment_id, 2);
+        assert_eq!(next.source_text, "New words belong to the current segment");
     }
 
     #[test]
