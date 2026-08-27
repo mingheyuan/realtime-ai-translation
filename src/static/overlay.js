@@ -1,9 +1,10 @@
 const stack = document.querySelector("#caption-stack");
 const waiting = document.querySelector("#waiting-card");
 const statusLabel = document.querySelector("#overlay-status");
-const modeLabel = document.querySelector("#overlay-mode");
 const startButton = document.querySelector("#overlay-start");
 const stopButton = document.querySelector("#overlay-stop");
+const audioSelect = document.querySelector("#overlay-audio");
+const directionButton = document.querySelector("#overlay-direction");
 
 let socket;
 let reconnectTimer;
@@ -21,13 +22,16 @@ function setRunning(running) {
   sessionRunning = running;
   startButton.disabled = running;
   stopButton.disabled = !running;
+  audioSelect.disabled = running;
+  directionButton.disabled = running;
   document.body.classList.toggle("session-running", running);
 }
 
-function updateModeLabel() {
-  const source = preferences.audio_source === "system_audio" ? "系统音频" : "麦克风";
-  const direction = preferences.source_language.startsWith("zh") ? "中→英" : "英→中";
-  modeLabel.textContent = `${source} · ${direction}`;
+function updateSettingsControls() {
+  audioSelect.value = preferences.audio_source;
+  directionButton.textContent = preferences.source_language.startsWith("zh")
+    ? "中 → 英"
+    : "英 → 中";
 }
 
 async function jsonRequest(url, options = {}) {
@@ -44,7 +48,7 @@ async function refreshOverlayState() {
   try {
     const state = await jsonRequest("/api/overlay/state");
     preferences = state.preferences;
-    updateModeLabel();
+    updateSettingsControls();
     setRunning(state.running);
     if (state.running) statusLabel.textContent = "实时翻译中";
   } catch (error) {
@@ -181,7 +185,7 @@ startButton.addEventListener("click", async () => {
   try {
     const state = await jsonRequest("/api/overlay/state");
     preferences = state.preferences;
-    updateModeLabel();
+    updateSettingsControls();
     await jsonRequest("/api/session/start", {
       method: "POST",
       body: JSON.stringify(preferences),
@@ -191,6 +195,39 @@ startButton.addEventListener("click", async () => {
     setRunning(false);
     statusLabel.textContent = error.message;
   }
+});
+
+async function savePreferences(nextPreferences) {
+  audioSelect.disabled = true;
+  directionButton.disabled = true;
+  try {
+    const state = await jsonRequest("/api/overlay/state", {
+      method: "POST",
+      body: JSON.stringify(nextPreferences),
+    });
+    preferences = state.preferences;
+    updateSettingsControls();
+    statusLabel.textContent = "设置已更新 · 可以开始";
+  } catch (error) {
+    updateSettingsControls();
+    statusLabel.textContent = error.message;
+  } finally {
+    audioSelect.disabled = sessionRunning;
+    directionButton.disabled = sessionRunning;
+  }
+}
+
+audioSelect.addEventListener("change", () => {
+  savePreferences({ ...preferences, audio_source: audioSelect.value });
+});
+
+directionButton.addEventListener("click", () => {
+  const chineseSource = preferences.source_language.startsWith("zh");
+  savePreferences({
+    ...preferences,
+    source_language: chineseSource ? "en-US" : "zh-CN",
+    target_language: chineseSource ? "zh-CN" : "en-US",
+  });
 });
 
 stopButton.addEventListener("click", async () => {
@@ -204,6 +241,6 @@ stopButton.addEventListener("click", async () => {
   }
 });
 
-updateModeLabel();
+updateSettingsControls();
 refreshOverlayState();
 connect();

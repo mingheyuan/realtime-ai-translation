@@ -7,7 +7,7 @@ private let bottomMargin: CGFloat = 28
 private let frameAutosaveName = "RealtimeTranslationOverlayFrame"
 
 final class OverlayPanel: NSPanel {
-    override var canBecomeKey: Bool { false }
+    override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 }
 
@@ -18,6 +18,58 @@ final class DragHandleView: NSView {
 
     override func resetCursorRects() {
         addCursorRect(bounds, cursor: .openHand)
+    }
+}
+
+final class ResizeHandleView: NSView {
+    private var initialFrame: NSRect?
+    private var initialMouseLocation: NSPoint?
+
+    override func mouseDown(with event: NSEvent) {
+        initialFrame = window?.frame
+        initialMouseLocation = NSEvent.mouseLocation
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let window, let initialFrame, let initialMouseLocation else { return }
+        let currentMouseLocation = NSEvent.mouseLocation
+        let deltaX = currentMouseLocation.x - initialMouseLocation.x
+        let deltaY = currentMouseLocation.y - initialMouseLocation.y
+        let width = min(
+            window.maxSize.width,
+            max(window.minSize.width, initialFrame.width + deltaX)
+        )
+        let height = min(
+            window.maxSize.height,
+            max(window.minSize.height, initialFrame.height - deltaY)
+        )
+        let frame = NSRect(
+            x: initialFrame.minX,
+            y: initialFrame.maxY - height,
+            width: width,
+            height: height
+        )
+        window.setFrame(frame, display: true)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        initialFrame = nil
+        initialMouseLocation = nil
+    }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .crosshair)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor(white: 0.82, alpha: 0.42).setStroke()
+        let path = NSBezierPath()
+        path.lineWidth = 1.2
+        for offset: CGFloat in [5, 9, 13] {
+            path.move(to: NSPoint(x: bounds.maxX - offset, y: 3))
+            path.line(to: NSPoint(x: bounds.maxX - 3, y: offset))
+        }
+        path.stroke()
     }
 }
 
@@ -42,7 +94,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         panel.isMovableByWindowBackground = false
-        panel.minSize = NSSize(width: 440, height: 180)
+        panel.minSize = NSSize(width: 440, height: 240)
         panel.maxSize = NSSize(width: 1_200, height: 640)
         panel.isReleasedWhenClosed = false
 
@@ -62,7 +114,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         container.addSubview(webView)
 
         let dragHandle = DragHandleView(
-            frame: NSRect(x: 34, y: overlayHeight - 27, width: overlayWidth - 300, height: 25)
+            frame: NSRect(x: 34, y: overlayHeight - 27, width: overlayWidth - 230, height: 25)
         )
         dragHandle.autoresizingMask = [.width, .minYMargin]
         container.addSubview(dragHandle)
@@ -79,6 +131,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         closeButton.action = #selector(closeOverlay)
         closeButton.toolTip = "关闭悬浮字幕"
         container.addSubview(closeButton)
+
+        let resizeHandle = ResizeHandleView(
+            frame: NSRect(x: overlayWidth - 23, y: 2, width: 19, height: 19)
+        )
+        resizeHandle.autoresizingMask = [.minXMargin, .maxYMargin]
+        container.addSubview(resizeHandle)
 
         panel.contentView = container
         if !panel.setFrameUsingName(frameAutosaveName) {
@@ -103,6 +161,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         hasVisibleWindows flag: Bool
     ) -> Bool {
         panel?.orderFrontRegardless()
+        webView?.reload()
         return true
     }
 

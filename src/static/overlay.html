@@ -12,12 +12,21 @@
       <header class="drag-bar" aria-label="拖动区域">
         <span class="live-dot"></span>
         <span id="overlay-status">正在连接实时翻译</span>
-        <span class="mode-label" id="overlay-mode">麦克风 · 中→英</span>
         <div class="overlay-controls" aria-label="翻译控制">
           <button class="overlay-start" id="overlay-start" type="button">开始</button>
           <button class="overlay-stop" id="overlay-stop" type="button" disabled>停止</button>
         </div>
       </header>
+      <div class="settings-bar" aria-label="翻译设置">
+        <label for="overlay-audio">输入</label>
+        <select id="overlay-audio">
+          <option value="microphone">麦克风</option>
+          <option value="system_audio">系统音频</option>
+        </select>
+        <label for="overlay-direction">方向</label>
+        <button class="direction-button" id="overlay-direction" type="button">中 → 英</button>
+        <span class="settings-hint">运行中需先停止才能切换</span>
+      </div>
       <section class="caption-stack" id="caption-stack" aria-live="polite">
         <article class="caption-card waiting" id="waiting-card">
           <div class="waiting-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>

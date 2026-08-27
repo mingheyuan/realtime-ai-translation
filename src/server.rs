@@ -112,7 +112,10 @@ pub fn router(state: AppState) -> Router {
         .route("/ws", get(websocket))
         .route("/api/health", get(health))
         .route("/api/overlay/open", post(open_overlay))
-        .route("/api/overlay/state", get(overlay_state))
+        .route(
+            "/api/overlay/state",
+            get(overlay_state).post(update_overlay_state),
+        )
         .route("/api/session/start", post(start_session))
         .route("/api/session/stop", post(stop_session))
         .route(
@@ -240,6 +243,21 @@ async fn overlay_state(State(state): State<AppState>) -> Json<OverlayStateRespon
         running,
         preferences,
     })
+}
+
+async fn update_overlay_state(
+    State(state): State<AppState>,
+    Json(preferences): Json<StartSessionRequest>,
+) -> Result<Json<OverlayStateResponse>, ApiError> {
+    validate_direction(&preferences)?;
+    if state.inner.session.lock().await.is_some() {
+        return Err(ApiError::conflict("请先停止当前翻译，再更改输入或语言方向"));
+    }
+    *state.inner.overlay_preferences.lock().await = preferences.clone();
+    Ok(Json(OverlayStateResponse {
+        running: false,
+        preferences,
+    }))
 }
 
 async fn websocket(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
@@ -756,6 +774,13 @@ impl ApiError {
         }
     }
 
+    fn conflict(message: &str) -> Self {
+        Self {
+            status: StatusCode::CONFLICT,
+            message: message.to_owned(),
+        }
+    }
+
     fn internal(message: String) -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
@@ -983,6 +1008,38 @@ mod tests {
         assert_eq!(
             updated_overlay_state_json["preferences"]["audio_source"],
             "system_audio"
+        );
+
+        let saved_overlay_preferences = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/overlay/state")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "source_language": "zh-CN",
+                            "target_language": "en-US",
+                            "audio_source": "microphone"
+                        })
+                        .to_string(),
+                    ))
+                    .expect("save overlay preferences request"),
+            )
+            .await
+            .expect("save overlay preferences response");
+        assert_eq!(saved_overlay_preferences.status(), StatusCode::OK);
+        let saved_overlay_preferences_body =
+            to_bytes(saved_overlay_preferences.into_body(), 64 * 1024)
+                .await
+                .expect("saved overlay preferences body");
+        let saved_overlay_preferences_json: serde_json::Value =
+            serde_json::from_slice(&saved_overlay_preferences_body)
+                .expect("saved overlay preferences JSON");
+        assert_eq!(
+            saved_overlay_preferences_json["preferences"]["source_language"],
+            "zh-CN"
         );
 
         let entry = serde_json::json!({

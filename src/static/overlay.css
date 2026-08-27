@@ -48,14 +48,7 @@ body.connected .live-dot {
 }
 
 body.disconnected .live-dot { background: #ff7379; }
-.mode-label {
-  margin-left: auto;
-  color: rgba(205, 209, 220, 0.42);
-  font-size: 9px;
-  white-space: nowrap;
-}
-
-.overlay-controls { display: flex; align-items: center; gap: 5px; }
+.overlay-controls { display: flex; align-items: center; gap: 5px; margin-left: auto; }
 .overlay-controls button {
   height: 23px;
   min-width: 43px;
@@ -75,8 +68,36 @@ body.disconnected .live-dot { background: #ff7379; }
 }
 .overlay-controls .overlay-stop:not(:disabled) { color: #ffb1b5; }
 
+.settings-bar {
+  height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 17px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.055);
+  background: rgba(255, 255, 255, 0.018);
+  color: rgba(205, 209, 220, 0.42);
+  font-size: 9px;
+  user-select: none;
+}
+
+.settings-bar select, .settings-bar button {
+  height: 23px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 7px;
+  outline: none;
+  color: rgba(239, 241, 247, 0.82);
+  background: rgba(255, 255, 255, 0.065);
+  font: 600 10px -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+}
+
+.settings-bar select { width: 82px; padding: 0 6px; }
+.settings-bar button { min-width: 58px; padding: 0 9px; cursor: pointer; }
+.settings-bar select:disabled, .settings-bar button:disabled { opacity: 0.36; cursor: default; }
+.settings-hint { margin-left: auto; white-space: nowrap; }
+
 .caption-stack {
-  height: calc(100% - 34px);
+  height: calc(100% - 68px);
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
@@ -156,7 +177,7 @@ body.session-running .waiting-wave i { animation: wave 1s ease-in-out infinite; 
 @keyframes wave { 50% { transform: scaleY(0.38); opacity: 0.5; } }
 
 @media (max-width: 560px) {
-  #overlay-status, .mode-label { display: none; }
+  #overlay-status, .settings-bar > label, .settings-hint { display: none; }
   .overlay-controls { margin-left: auto; }
 }
 
