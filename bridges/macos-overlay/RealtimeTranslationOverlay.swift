@@ -41,11 +41,11 @@ final class ResizeHandleView: NSView {
         )
         let height = min(
             window.maxSize.height,
-            max(window.minSize.height, initialFrame.height - deltaY)
+            max(window.minSize.height, initialFrame.height + deltaY)
         )
         let frame = NSRect(
             x: initialFrame.minX,
-            y: initialFrame.maxY - height,
+            y: initialFrame.minY,
             width: width,
             height: height
         )
@@ -133,9 +133,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         container.addSubview(closeButton)
 
         let resizeHandle = ResizeHandleView(
-            frame: NSRect(x: overlayWidth - 23, y: 2, width: 19, height: 19)
+            frame: NSRect(x: overlayWidth - 23, y: overlayHeight - 62, width: 19, height: 19)
         )
-        resizeHandle.autoresizingMask = [.minXMargin, .maxYMargin]
+        resizeHandle.autoresizingMask = [.minXMargin, .minYMargin]
         container.addSubview(resizeHandle)
 
         panel.contentView = container
