@@ -9,6 +9,7 @@ pub struct SegmentManager {
     current_segment_text: String,
     segment_id: u64,
     revision: u64,
+    started_at: Option<Instant>,
     updated_at: Option<Instant>,
     idle_timeout: Duration,
 }
@@ -21,6 +22,7 @@ impl SegmentManager {
             current_segment_text: String::new(),
             segment_id: 1,
             revision: 0,
+            started_at: None,
             updated_at: None,
             idle_timeout,
         }
@@ -50,6 +52,9 @@ impl SegmentManager {
             text
         };
         self.latest_full_text = text.to_owned();
+        if !current.is_empty() && self.started_at.is_none() {
+            self.started_at = Some(now);
+        }
         self.updated_at = Some(now);
         self.current_segment_text = current.to_owned();
         let current = self.current_segment_text.clone();
@@ -64,9 +69,23 @@ impl SegmentManager {
         let Some(updated_at) = self.updated_at else {
             return false;
         };
-        !self.current_segment_text.is_empty()
-            && (now.saturating_duration_since(updated_at) >= self.idle_timeout
-                || ends_sentence(&self.current_segment_text))
+        if self.current_segment_text.is_empty() {
+            return false;
+        }
+        let segment_age = self
+            .started_at
+            .map(|started_at| now.saturating_duration_since(started_at))
+            .unwrap_or_default();
+        if segment_age >= Duration::from_secs(8) {
+            return true;
+        }
+        if !meets_minimum_segment_size(&self.current_segment_text) {
+            return false;
+        }
+        let stable_for = now.saturating_duration_since(updated_at);
+        stable_for >= self.idle_timeout
+            || (ends_sentence(&self.current_segment_text)
+                && stable_for >= Duration::from_millis(300))
     }
 
     pub fn finalize(&mut self) -> Option<SegmentSnapshot> {
@@ -80,6 +99,7 @@ impl SegmentManager {
         self.current_segment_text.clear();
         self.segment_id = self.segment_id.saturating_add(1);
         self.revision = 0;
+        self.started_at = None;
         self.updated_at = None;
         Some(snapshot)
     }
@@ -199,6 +219,20 @@ fn is_segment_separator(character: char) -> bool {
         )
 }
 
+fn meets_minimum_segment_size(text: &str) -> bool {
+    let tokens = transcript_tokens(text);
+    let ascii_words = tokens
+        .iter()
+        .filter(|token| token.normalized.is_ascii())
+        .count();
+    let non_ascii_characters = tokens.len().saturating_sub(ascii_words);
+    if non_ascii_characters > 0 {
+        non_ascii_characters >= 10 || ascii_words >= 6
+    } else {
+        ascii_words >= 6
+    }
+}
+
 fn ends_sentence(text: &str) -> bool {
     let text = text.trim_end_matches(|character: char| {
         matches!(
@@ -219,18 +253,18 @@ mod tests {
     #[test]
     fn partial_updates_replace_one_segment_and_idle_finalizes_it() {
         let start = Instant::now();
-        let mut manager = SegmentManager::new(Duration::from_millis(900));
+        let mut manager = SegmentManager::new(Duration::from_millis(1_500));
         let first = manager.update("我想做", start).expect("first partial");
         let second = manager
-            .update("我想做实时翻译", start + Duration::from_millis(200))
+            .update("我想做一个实时翻译应用", start + Duration::from_millis(200))
             .expect("second partial");
         assert_eq!(first.segment_id, second.segment_id);
         assert!(second.revision > first.revision);
-        assert!(!manager.should_finalize(start + Duration::from_millis(800)));
-        assert!(manager.should_finalize(start + Duration::from_millis(1_200)));
+        assert!(!manager.should_finalize(start + Duration::from_millis(1_600)));
+        assert!(manager.should_finalize(start + Duration::from_millis(1_700)));
         let final_segment = manager.finalize().expect("final segment");
         assert_eq!(final_segment.state, CaptionState::Final);
-        assert_eq!(final_segment.source_text, "我想做实时翻译");
+        assert_eq!(final_segment.source_text, "我想做一个实时翻译应用");
     }
 
     #[test]
@@ -308,5 +342,36 @@ mod tests {
         assert!(ends_sentence("先暂停；"));
         assert!(ends_sentence("未完待续……"));
         assert!(!ends_sentence("这一段还没有结束"));
+    }
+
+    #[test]
+    fn short_fragments_wait_instead_of_becoming_history() {
+        let start = Instant::now();
+        let mut manager = SegmentManager::new(Duration::from_millis(1_500));
+        manager.update("kind of.", start);
+        assert!(!manager.should_finalize(start + Duration::from_millis(500)));
+        assert!(!manager.should_finalize(start + Duration::from_secs(2)));
+        assert!(manager.should_finalize(start + Duration::from_secs(8)));
+    }
+
+    #[test]
+    fn punctuation_must_stay_stable_before_it_ends_a_segment() {
+        let start = Instant::now();
+        let mut manager = SegmentManager::new(Duration::from_millis(1_500));
+        manager.update("This sentence contains enough words to finish.", start);
+        assert!(!manager.should_finalize(start + Duration::from_millis(299)));
+        assert!(manager.should_finalize(start + Duration::from_millis(300)));
+    }
+
+    #[test]
+    fn a_long_continuous_segment_has_a_maximum_duration() {
+        let start = Instant::now();
+        let mut manager = SegmentManager::new(Duration::from_millis(1_500));
+        manager.update("continuous speech starts here", start);
+        manager.update(
+            "continuous speech starts here and keeps growing",
+            start + Duration::from_millis(7_900),
+        );
+        assert!(manager.should_finalize(start + Duration::from_secs(8)));
     }
 }

@@ -50,7 +50,7 @@ impl AppConfig {
         let segment_idle_ms = env::var("RT_TRANSLATION_SEGMENT_IDLE_MS")
             .ok()
             .and_then(|value| value.parse().ok())
-            .unwrap_or(900);
+            .unwrap_or(1_500);
         let llm = LlmConfig {
             enabled: env_bool("RT_TRANSLATION_LLM_ENABLED", false),
             base_url: env::var("RT_TRANSLATION_LLM_BASE_URL")
