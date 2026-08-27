@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>Realtime AI Translation</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">译</span>
+          <div>
+            <h1>Realtime AI Translation</h1>
+            <p>Apple Speech · Personal Glossary · MarianMT · LLM</p>
+          </div>
+        </div>
+        <div class="connection">
+          <span class="status-dot" id="connection-dot"></span>
+          <span id="connection-label">正在连接</span>
+        </div>
+      </header>
+
+      <main>
+        <section class="control-card">
+          <div class="direction">
+            <label>
+              <span>听写语言</span>
+              <select id="source-language">
+                <option value="zh-CN">中文（简体）</option>
+                <option value="en-US">English (US)</option>
+              </select>
+            </label>
+            <button class="swap-button" id="swap" type="button" aria-label="交换语言">⇄</button>
+            <label>
+              <span>翻译语言</span>
+              <select id="target-language">
+                <option value="en-US">English (US)</option>
+                <option value="zh-CN">中文（简体）</option>
+              </select>
+            </label>
+          </div>
+          <div class="actions">
+            <button class="primary" id="start" type="button">
+              <span class="mic" aria-hidden="true"></span>
+              开始实时翻译
+            </button>
+            <button class="secondary danger" id="stop" type="button" disabled>停止</button>
+            <button class="secondary" id="dictionary-toggle" type="button">个人词典</button>
+            <div class="session-status" id="session-status">准备就绪</div>
+          </div>
+        </section>
+
+        <section class="pipeline" aria-label="处理流程">
+          <div data-health="speech">
+            <span class="pipeline-index">1</span>
+            <div><strong>Apple Speech</strong><small>实时原文 · partial</small></div>
+          </div>
+          <i>→</i>
+          <div data-health="model">
+            <span class="pipeline-index">2</span>
+            <div><strong>MarianMT</strong><small>快速草稿 · draft</small></div>
+          </div>
+          <i>→</i>
+          <div data-health="llm">
+            <span class="pipeline-index">3</span>
+            <div><strong>LLM</strong><small>上下文润色 · final</small></div>
+          </div>
+        </section>
+
+        <section class="caption-stage">
+          <div class="section-heading">
+            <div>
+              <span class="eyebrow">LIVE CAPTIONS</span>
+              <h2>实时字幕</h2>
+            </div>
+            <span class="hint">终稿可以直接修改，保存后会学习为个人词典</span>
+          </div>
+          <div class="empty-state" id="empty-state">
+            <div class="wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+            <strong>点击“开始实时翻译”后说话</strong>
+            <span>原文会先出现，快速译文随后覆盖，LLM 终稿最后锁定。</span>
+          </div>
+          <div class="captions" id="captions" aria-live="polite"></div>
+        </section>
+      </main>
+    </div>
+
+    <aside class="dictionary-panel" id="dictionary-panel" aria-hidden="true">
+      <div class="panel-header">
+        <div><span class="eyebrow">PERSONAL GLOSSARY</span><h2>个人词典</h2></div>
+        <button class="icon-button" id="dictionary-close" type="button" aria-label="关闭">×</button>
+      </div>
+      <p class="panel-intro">术语会同时进入 Apple Speech 热词、ASR 纠错和翻译约束。</p>
+      <form id="dictionary-form">
+        <div class="form-row">
+          <label><span>原词</span><input name="source" required placeholder="例如：实时翻译" /></label>
+          <label><span>固定译法</span><input name="target" required placeholder="real-time translation" /></label>
+        </div>
+        <div class="form-row compact">
+          <label>
+            <span>方向</span>
+            <select name="direction">
+              <option value="zh-en">中 → 英</option>
+              <option value="en-zh">英 → 中</option>
+            </select>
+          </label>
+          <label><span>领域</span><input name="domain" value="general" /></label>
+        </div>
+        <label><span>ASR 别名（逗号分隔）</span><input name="aliases" placeholder="错误写法, 同音词" /></label>
+        <button class="primary small" type="submit">保存术语</button>
+      </form>
+      <div class="dictionary-list" id="dictionary-list"></div>
+    </aside>
+    <div class="backdrop" id="backdrop"></div>
+    <div class="toast" id="toast" role="status"></div>
+    <script src="/app.js"></script>
+  </body>
+</html>

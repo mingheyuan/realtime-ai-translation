@@ -1,0 +1,25 @@
+[package]
+name = "realtime-ai-translation"
+version = "0.1.0"
+edition = "2021"
+description = "Real-time Chinese-English speech translation with a personal glossary"
+license = "MIT"
+
+[dependencies]
+anyhow = "1.0"
+async-trait = "0.1"
+axum = { version = "0.7", features = ["json", "ws"] }
+futures-util = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+tokio = { version = "1.0", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+uuid = { version = "1.0", features = ["serde", "v4"] }
+
+[dev-dependencies]
+tempfile = "3.0"
+
