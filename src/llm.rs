@@ -134,6 +134,8 @@ struct ChatResponseMessage {
 
 #[cfg(test)]
 mod tests {
+    use axum::{routing::post, Json, Router};
+
     use super::*;
 
     #[tokio::test]
@@ -152,5 +154,52 @@ mod tests {
             .expect("fallback");
         assert_eq!(output.text, "Hello");
         assert!(!output.applied);
+    }
+
+    #[tokio::test]
+    async fn enabled_llm_uses_openai_compatible_chat_completions() {
+        let app = Router::new().route(
+            "/v1/chat/completions",
+            post(|| async {
+                Json(serde_json::json!({
+                    "choices": [{
+                        "message": {
+                            "content": "This is the polished final translation."
+                        }
+                    }]
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("mock listener");
+        let address = listener.local_addr().expect("mock address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("mock LLM server");
+        });
+        let refiner = LlmRefiner::new(LlmConfig {
+            enabled: true,
+            base_url: format!("http://{address}/v1"),
+            api_key: "test-key".to_owned(),
+            model: "test-model".to_owned(),
+            timeout_seconds: 2,
+        })
+        .expect("client");
+
+        let output = refiner
+            .refine(
+                "这是最终译文。",
+                "This is final translation.",
+                "zh",
+                "en",
+                &[("上一句".to_owned(), "Previous sentence.".to_owned())],
+                &[],
+            )
+            .await
+            .expect("refined translation");
+        server.abort();
+
+        assert_eq!(output.text, "This is the polished final translation.");
+        assert!(output.applied);
     }
 }

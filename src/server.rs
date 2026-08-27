@@ -17,7 +17,7 @@ use axum::{
 use futures_util::{SinkExt, StreamExt};
 use serde::Serialize;
 use tokio::{
-    sync::{broadcast, oneshot, Mutex},
+    sync::{broadcast, oneshot, Mutex, Semaphore},
     task::JoinSet,
     time::interval,
 };
@@ -48,6 +48,7 @@ struct AppStateInner {
     config: AppConfig,
     dictionary: DictionaryStore,
     translator: SharedTranslationProvider,
+    translation_gate: Arc<Semaphore>,
     llm: LlmRefiner,
     events: broadcast::Sender<ServerEvent>,
     session: Mutex<Option<SessionHandle>>,
@@ -77,6 +78,7 @@ impl AppState {
                 config,
                 dictionary,
                 translator,
+                translation_gate: Arc::new(Semaphore::new(1)),
                 llm,
                 events,
                 session: Mutex::new(None),
@@ -196,6 +198,7 @@ async fn start_session(
             running: true,
         }));
     }
+    state.inner.context.lock().await.clear();
     let id = Uuid::new_v4();
     let (stop_tx, stop_rx) = oneshot::channel();
     *session = Some(SessionHandle {
@@ -375,6 +378,19 @@ async fn process_snapshot(
     snapshot: SegmentSnapshot,
 ) {
     let started = Instant::now();
+    let translation_permit = if snapshot.state == CaptionState::Final {
+        match state.inner.translation_gate.clone().acquire_owned().await {
+            Ok(permit) => permit,
+            Err(_) => return,
+        }
+    } else {
+        match state.inner.translation_gate.clone().try_acquire_owned() {
+            Ok(permit) => permit,
+            // Keep the model queue bounded: stale partials are disposable,
+            // while final snapshots use the awaited branch above.
+            Err(_) => return,
+        }
+    };
     let normalized = match state
         .inner
         .dictionary
@@ -423,6 +439,7 @@ async fn process_snapshot(
     let draft_latency_ms = draft.latency_ms;
     let mut translation_text = draft.text;
     let mut llm_applied = false;
+    drop(translation_permit);
     state.emit(ServerEvent::Caption {
         segment_id: snapshot.segment_id,
         revision: event_revision(snapshot.revision, 1),
@@ -593,11 +610,186 @@ impl IntoResponse for ApiError {
 
 #[cfg(test)]
 mod tests {
-    use super::event_revision;
+    use std::time::Duration;
+
+    use axum::{
+        body::{to_bytes, Body},
+        http::{Request, StatusCode},
+    };
+    use tempfile::TempDir;
+    use tokio::time::timeout;
+    use tower::ServiceExt;
+
+    use super::{event_revision, process_snapshot, router, AppState};
+    use crate::{
+        config::{AppConfig, LlmConfig},
+        domain::{CaptionState, GlossaryEntry, SegmentSnapshot, ServerEvent, StartSessionRequest},
+    };
 
     #[test]
     fn later_asr_revisions_outrank_every_phase_of_older_text() {
         assert!(event_revision(4, 0) > event_revision(3, 2));
         assert!(event_revision(4, 2) > event_revision(4, 1));
+    }
+
+    #[tokio::test]
+    async fn busy_model_drops_partial_but_preserves_final() {
+        let (state, _directory) = test_state();
+        let mut events = state.inner.events.subscribe();
+        let busy_permit = state
+            .inner
+            .translation_gate
+            .clone()
+            .acquire_owned()
+            .await
+            .expect("translation gate");
+        let request = StartSessionRequest {
+            source_language: "zh-CN".to_owned(),
+            target_language: "en-US".to_owned(),
+        };
+
+        process_snapshot(
+            state.clone(),
+            request.clone(),
+            SegmentSnapshot {
+                segment_id: 1,
+                revision: 1,
+                state: CaptionState::Partial,
+                source_text: "旧的部分文本".to_owned(),
+            },
+        )
+        .await;
+        assert!(timeout(Duration::from_millis(25), events.recv())
+            .await
+            .is_err());
+
+        let final_task = tokio::spawn(process_snapshot(
+            state.clone(),
+            request,
+            SegmentSnapshot {
+                segment_id: 1,
+                revision: 2,
+                state: CaptionState::Final,
+                source_text: "最终文本".to_owned(),
+            },
+        ));
+        tokio::task::yield_now().await;
+        assert!(!final_task.is_finished());
+
+        drop(busy_permit);
+        final_task.await.expect("final translation task");
+        let draft = timeout(Duration::from_secs(1), events.recv())
+            .await
+            .expect("draft timeout")
+            .expect("draft event");
+        let final_caption = timeout(Duration::from_secs(1), events.recv())
+            .await
+            .expect("final timeout")
+            .expect("final event");
+        assert!(matches!(
+            draft,
+            ServerEvent::Caption {
+                state: CaptionState::Draft,
+                ..
+            }
+        ));
+        assert!(matches!(
+            final_caption,
+            ServerEvent::Caption {
+                state: CaptionState::Final,
+                ..
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn health_and_dictionary_work_through_http_router() {
+        let (state, _directory) = test_state();
+        let app = router(state);
+        let health = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/health")
+                    .body(Body::empty())
+                    .expect("health request"),
+            )
+            .await
+            .expect("health response");
+        assert_eq!(health.status(), StatusCode::OK);
+        let health_body = to_bytes(health.into_body(), 64 * 1024)
+            .await
+            .expect("health body");
+        let health_json: serde_json::Value =
+            serde_json::from_slice(&health_body).expect("health JSON");
+        assert_eq!(health_json["ok"], true);
+        assert_eq!(health_json["fake_translation"], true);
+
+        let entry = serde_json::json!({
+            "id": null,
+            "source": "实时翻译",
+            "source_language": "zh",
+            "target": "real-time translation",
+            "target_language": "en",
+            "aliases": ["实时反应"],
+            "domain": "AI",
+            "confidence": 1.0,
+            "evidence_count": 1,
+            "active": true
+        });
+        let saved = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/dictionary")
+                    .header("content-type", "application/json")
+                    .body(Body::from(entry.to_string()))
+                    .expect("dictionary request"),
+            )
+            .await
+            .expect("dictionary response");
+        assert_eq!(saved.status(), StatusCode::OK);
+
+        let listed = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/dictionary")
+                    .body(Body::empty())
+                    .expect("list request"),
+            )
+            .await
+            .expect("list response");
+        assert_eq!(listed.status(), StatusCode::OK);
+        let listed_body = to_bytes(listed.into_body(), 64 * 1024)
+            .await
+            .expect("list body");
+        let entries: Vec<GlossaryEntry> =
+            serde_json::from_slice(&listed_body).expect("dictionary JSON");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].target, "real-time translation");
+        assert_eq!(entries[0].aliases, ["实时反应"]);
+    }
+
+    fn test_state() -> (AppState, TempDir) {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let state = AppState::new(AppConfig {
+            listen: "127.0.0.1:0".parse().expect("listen address"),
+            database_path: directory.path().join("dictionary.sqlite3"),
+            speech_bridge_path: directory.path().join("speech-bridge"),
+            python_path: directory.path().join("python"),
+            model_worker_path: directory.path().join("worker.py"),
+            fake_translation: true,
+            segment_idle_ms: 900,
+            llm: LlmConfig {
+                enabled: false,
+                base_url: "http://127.0.0.1:1/v1".to_owned(),
+                api_key: String::new(),
+                model: String::new(),
+                timeout_seconds: 1,
+            },
+        })
+        .expect("test app state");
+        (state, directory)
     }
 }

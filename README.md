@@ -1,5 +1,7 @@
 # Realtime AI Translation
 
+[![CI](https://github.com/mingheyuan/realtime-ai-translation/actions/workflows/ci.yml/badge.svg)](https://github.com/mingheyuan/realtime-ai-translation/actions/workflows/ci.yml)
+
 macOS 上的中英双向实时语音翻译 MVP。它沿用 Saymore 值得借鉴的思路：Apple Speech 流式听写、个人词典、可回写的错误纠正；在 ASR 与可选 LLM 之间增加本地 MarianMT，让字幕不必等待云端模型。
 
 > 本项目是独立实现，没有复制 Saymore 源码。Saymore 使用 PolyForm Shield 许可证，本项目使用 MIT 许可证。
@@ -36,6 +38,7 @@ Segment Manager（segment_id + revision）
 - 本地 OPUS-MT 中文→英文、英文→中文模型，进程常驻并按方向懒加载。
 - 可选 OpenAI-compatible LLM 终稿。
 - WebSocket 可替换字幕：ASR 原文 → 快速译文 → LLM 终稿。
+- 模型忙时丢弃过期 partial，final 可靠排队，避免冷启动积压拖慢终稿。
 - 终稿可编辑；短差异可保存为双语词典项。
 - 浏览器界面支持语言切换、启动停止、字幕历史和词典管理。
 
@@ -46,6 +49,8 @@ Segment Manager（segment_id + revision）
 - Rust stable。
 - Python 3.9 或更高版本。
 - 首次启动时授予“麦克风”和“语音识别”权限。
+
+如果之前拒绝过权限，请在“系统设置 → 隐私与安全性 → 麦克风 / 语音识别”中启用启动本项目所用的终端或应用，然后重新开始会话。
 
 ## 启动
 

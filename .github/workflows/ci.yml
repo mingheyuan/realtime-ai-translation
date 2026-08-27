@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Rust formatting
+        run: cargo fmt -- --check
+      - name: Rust tests
+        run: cargo test
+      - name: Rust lint
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Python worker syntax
+        run: python3 -m py_compile model-worker/worker.py
+      - name: Apple Speech bridge
+        run: ./scripts/build-macos-speech.sh

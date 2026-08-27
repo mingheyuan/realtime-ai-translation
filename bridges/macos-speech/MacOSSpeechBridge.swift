@@ -34,6 +34,26 @@ private func fail(_ message: String) -> Never {
     exit(1)
 }
 
+private func authorizeMicrophone() -> Bool {
+    switch AVCaptureDevice.authorizationStatus(for: .audio) {
+    case .authorized:
+        return true
+    case .notDetermined:
+        let authorization = DispatchSemaphore(value: 0)
+        var granted = false
+        AVCaptureDevice.requestAccess(for: .audio) { result in
+            granted = result
+            authorization.signal()
+        }
+        guard authorization.wait(timeout: .now() + 30) != .timedOut else {
+            return false
+        }
+        return granted
+    default:
+        return false
+    }
+}
+
 private final class RecognitionController {
     private let recognizer: SFSpeechRecognizer
     private let contextualTerms: [String]
@@ -172,17 +192,27 @@ private final class RecognitionController {
 let localeIdentifier = argumentValues(named: "--locale").first ?? "zh-CN"
 let contextualTerms = argumentValues(named: "--term")
 
-let authorization = DispatchSemaphore(value: 0)
-var authorizationStatus = SFSpeechRecognizerAuthorizationStatus.notDetermined
-SFSpeechRecognizer.requestAuthorization { status in
-    authorizationStatus = status
-    authorization.signal()
+guard authorizeMicrophone() else {
+    fail(
+        "Microphone permission was not granted. Open System Settings > Privacy & Security > Microphone and enable the app used to launch Realtime AI Translation."
+    )
 }
-if authorization.wait(timeout: .now() + 30) == .timedOut {
-    fail("Speech Recognition authorization timed out")
+
+let authorization = DispatchSemaphore(value: 0)
+var authorizationStatus = SFSpeechRecognizer.authorizationStatus()
+if authorizationStatus == .notDetermined {
+    SFSpeechRecognizer.requestAuthorization { status in
+        authorizationStatus = status
+        authorization.signal()
+    }
+    if authorization.wait(timeout: .now() + 30) == .timedOut {
+        fail("Speech Recognition authorization timed out")
+    }
 }
 guard authorizationStatus == .authorized else {
-    fail("Speech Recognition permission was not granted")
+    fail(
+        "Speech Recognition permission was not granted. Open System Settings > Privacy & Security > Speech Recognition and enable the app used to launch Realtime AI Translation."
+    )
 }
 
 guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: localeIdentifier)) else {

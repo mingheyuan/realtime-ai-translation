@@ -20,7 +20,12 @@ const elements = {
 
 let socket;
 let reconnectTimer;
+let sessionActive = false;
 const segmentVersions = new Map();
+
+function otherLocale(locale) {
+  return locale.startsWith("zh") ? "en-US" : "zh-CN";
+}
 
 function setRunning(running) {
   elements.start.disabled = running;
@@ -29,6 +34,15 @@ function setRunning(running) {
   elements.target.disabled = running;
   elements.swap.disabled = running;
   document.body.classList.toggle("recording", running);
+}
+
+function setStopping() {
+  elements.start.disabled = true;
+  elements.stop.disabled = true;
+  elements.source.disabled = true;
+  elements.target.disabled = true;
+  elements.swap.disabled = true;
+  document.body.classList.remove("recording");
 }
 
 function setStatus(message) {
@@ -73,6 +87,14 @@ function connectSocket() {
 function handleEvent(event) {
   if (event.type === "caption") renderCaption(event);
   if (event.type === "session_status") {
+    if (event.running && !sessionActive) {
+      sessionActive = true;
+      segmentVersions.clear();
+      elements.captions.replaceChildren();
+      elements.empty.hidden = false;
+    } else if (!event.running) {
+      sessionActive = false;
+    }
     setRunning(event.running);
     setStatus(event.message);
   }
@@ -193,11 +215,12 @@ elements.start.addEventListener("click", async () => {
 });
 
 elements.stop.addEventListener("click", async () => {
+  setStopping();
+  setStatus("正在结束当前句…");
   try {
     await jsonRequest("/api/session/stop", { method: "POST" });
-    setRunning(false);
-    setStatus("正在结束当前句…");
   } catch (error) {
+    setRunning(true);
     showToast(error.message, "error");
   }
 });
@@ -206,6 +229,18 @@ elements.swap.addEventListener("click", () => {
   const source = elements.source.value;
   elements.source.value = elements.target.value;
   elements.target.value = source;
+});
+
+elements.source.addEventListener("change", () => {
+  if (elements.source.value === elements.target.value) {
+    elements.target.value = otherLocale(elements.source.value);
+  }
+});
+
+elements.target.addEventListener("change", () => {
+  if (elements.source.value === elements.target.value) {
+    elements.source.value = otherLocale(elements.target.value);
+  }
 });
 
 function setDictionaryOpen(open) {
