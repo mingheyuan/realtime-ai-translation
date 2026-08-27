@@ -103,7 +103,10 @@ private enum AudioSource: String {
 private final class RecognitionController {
     private let recognizer: SFSpeechRecognizer
     private let contextualTerms: [String]
-    private let controlQueue = DispatchQueue(label: "realtime-translation.speech-control")
+    private let controlQueue = DispatchQueue(
+        label: "realtime-translation.speech-control",
+        qos: .userInteractive
+    )
     private let requestLock = NSLock()
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
@@ -239,7 +242,7 @@ private final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelega
     private let controller: RecognitionController
     private let sampleQueue = DispatchQueue(
         label: "realtime-translation.system-audio",
-        qos: .userInitiated
+        qos: .userInteractive
     )
     private let stateLock = NSLock()
     private var stream: SCStream?
@@ -423,7 +426,7 @@ case .microphone:
     let engine = AVAudioEngine()
     let input = engine.inputNode
     let format = input.outputFormat(forBus: 0)
-    input.installTap(onBus: 0, bufferSize: 1_024, format: format) { buffer, _ in
+    input.installTap(onBus: 0, bufferSize: 512, format: format) { buffer, _ in
         controller.append(buffer)
     }
     do {

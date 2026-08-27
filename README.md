@@ -59,6 +59,7 @@ MarianMT 本身不是流式模型，不能安全地只翻译 ASR 新增的几个
 - 可选 OpenAI-compatible LLM 终稿。
 - WebSocket 可替换字幕：ASR 原文 → 快速译文 → LLM 终稿。
 - 模型忙时丢弃过期 partial，final 可靠排队，避免冷启动积压拖慢终稿。
+- 快速译文默认采用 200ms 预览节流；Apple Speech 原文仍在每次 partial 到达时立即显示。
 - 稳定前缀缓存和可回滚滑动窗口，避免连续讲话时从句首反复翻译。
 - 终稿可编辑；短差异可保存为双语词典项。
 - 浏览器界面支持语言切换、启动停止、字幕历史和词典管理。
@@ -101,6 +102,8 @@ MarianMT 权重在第一次使用某个翻译方向时从 Hugging Face 下载。
 ```bash
 RT_TRANSLATION_FAKE_TRANSLATION=1 cargo run
 ```
+
+`RT_TRANSLATION_PREVIEW_INTERVAL_MS` 控制快速译文尝试更新的最短间隔，默认 `200`，程序会限制在 `100–1000ms`。降低它不会缩短 Apple Speech 自身产生 partial 的时间，只会减少 ASR 更新后等待下一次 MarianMT 预览的额外延迟。M1 Pro 实测短句热推理 CPU 约 `119ms`、MPS 约 `564ms`，因此默认继续使用 CPU。首次加载某个方向仍可能需要数秒；打开悬浮窗、切换方向或开始会话时会提前异步预热，后续推理会明显更快。
 
 ## 可选 LLM
 

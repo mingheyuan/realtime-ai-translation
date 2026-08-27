@@ -1,5 +1,5 @@
 use std::{
-    collections::VecDeque,
+    collections::{HashSet, VecDeque},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -50,6 +50,7 @@ struct AppStateInner {
     dictionary: DictionaryStore,
     translator: SharedTranslationProvider,
     translation_gate: Arc<Semaphore>,
+    warmed_directions: Mutex<HashSet<String>>,
     llm: LlmRefiner,
     events: broadcast::Sender<ServerEvent>,
     session: Mutex<Option<SessionHandle>>,
@@ -82,6 +83,7 @@ impl AppState {
                 dictionary,
                 translator,
                 translation_gate: Arc::new(Semaphore::new(1)),
+                warmed_directions: Mutex::new(HashSet::new()),
                 llm,
                 events,
                 session: Mutex::new(None),
@@ -98,6 +100,34 @@ impl AppState {
 
     fn emit(&self, event: ServerEvent) {
         let _ = self.inner.events.send(event);
+    }
+
+    fn warmup_translation(&self, request: StartSessionRequest) {
+        let state = self.clone();
+        tokio::spawn(async move {
+            let key = format!(
+                "{}-{}",
+                base_language(&request.source_language),
+                base_language(&request.target_language)
+            );
+            {
+                let mut warmed = state.inner.warmed_directions.lock().await;
+                if !warmed.insert(key.clone()) {
+                    return;
+                }
+            }
+            if let Err(error) = state
+                .inner
+                .translator
+                .warmup(&request.source_language, &request.target_language)
+                .await
+            {
+                state.inner.warmed_directions.lock().await.remove(&key);
+                warn!(direction = %key, reason = %error, "translation warmup failed");
+            } else {
+                info!(direction = %key, "translation model warmed");
+            }
+        });
     }
 }
 
@@ -196,7 +226,11 @@ async fn open_overlay(
 ) -> Result<Json<OverlayResponse>, ApiError> {
     if let Some(Json(request)) = request {
         validate_direction(&request)?;
-        *state.inner.overlay_preferences.lock().await = request;
+        *state.inner.overlay_preferences.lock().await = request.clone();
+        state.warmup_translation(request);
+    } else {
+        let preferences = state.inner.overlay_preferences.lock().await.clone();
+        state.warmup_translation(preferences);
     }
     let app_path = &state.inner.config.overlay_app_path;
     if !app_path.is_dir() {
@@ -254,6 +288,7 @@ async fn update_overlay_state(
         return Err(ApiError::conflict("请先停止当前翻译，再更改输入或语言方向"));
     }
     *state.inner.overlay_preferences.lock().await = preferences.clone();
+    state.warmup_translation(preferences.clone());
     Ok(Json(OverlayStateResponse {
         running: false,
         preferences,
@@ -303,6 +338,7 @@ async fn start_session(
 ) -> Result<Json<SessionResponse>, ApiError> {
     validate_direction(&request)?;
     *state.inner.overlay_preferences.lock().await = request.clone();
+    state.warmup_translation(request.clone());
     let hotwords = state.inner.dictionary.hotwords(&request.source_language)?;
     let mut session = state.inner.session.lock().await;
     if let Some(current) = session.as_ref() {
@@ -417,7 +453,11 @@ async fn run_session(
                     Ok(AsrEvent::Partial { text }) => {
                         if let Some(snapshot) = manager.update(&text, Instant::now()) {
                             emit_source_snapshot(&state, &request, &snapshot);
-                            if last_preview.elapsed() >= Duration::from_millis(500) {
+                            if last_preview.elapsed()
+                                >= Duration::from_millis(
+                                    state.inner.config.preview_interval_ms,
+                                )
+                            {
                                 spawn_translation(&mut jobs, state.clone(), request.clone(), snapshot);
                                 last_preview = Instant::now();
                             }
@@ -1099,6 +1139,7 @@ mod tests {
             model_worker_path: directory.path().join("worker.py"),
             fake_translation: true,
             segment_idle_ms: 900,
+            preview_interval_ms: 200,
             llm: LlmConfig {
                 enabled: false,
                 base_url: "http://127.0.0.1:1/v1".to_owned(),

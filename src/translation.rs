@@ -43,6 +43,21 @@ pub trait TranslationProvider: Send + Sync {
         target_language: &str,
         glossary: &[GlossaryEntry],
     ) -> Result<TranslationOutput, TranslationError>;
+
+    async fn warmup(
+        &self,
+        source_language: &str,
+        target_language: &str,
+    ) -> Result<(), TranslationError> {
+        let probe = if source_language.to_ascii_lowercase().starts_with("zh") {
+            "准备"
+        } else {
+            "Ready"
+        };
+        self.translate(probe, source_language, target_language, &[])
+            .await
+            .map(|_| ())
+    }
 }
 
 pub type SharedTranslationProvider = Arc<dyn TranslationProvider>;
@@ -256,5 +271,14 @@ mod tests {
             .await
             .expect("translation");
         assert_eq!(output.text, "real-time translation");
+    }
+
+    #[tokio::test]
+    async fn translator_warmup_runs_a_small_inference() {
+        let translator = FakeTranslator;
+        translator
+            .warmup("zh-CN", "en-US")
+            .await
+            .expect("warmup succeeds");
     }
 }

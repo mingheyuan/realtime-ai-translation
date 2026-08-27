@@ -15,6 +15,7 @@ pub struct AppConfig {
     pub model_worker_path: PathBuf,
     pub fake_translation: bool,
     pub segment_idle_ms: u64,
+    pub preview_interval_ms: u64,
     pub llm: LlmConfig,
 }
 
@@ -55,6 +56,11 @@ impl AppConfig {
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(1_500);
+        let preview_interval_ms = env::var("RT_TRANSLATION_PREVIEW_INTERVAL_MS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(200)
+            .clamp(100, 1_000);
         let llm = LlmConfig {
             enabled: env_bool("RT_TRANSLATION_LLM_ENABLED", false),
             base_url: env::var("RT_TRANSLATION_LLM_BASE_URL")
@@ -76,6 +82,7 @@ impl AppConfig {
             model_worker_path,
             fake_translation,
             segment_idle_ms,
+            preview_interval_ms,
             llm,
         })
     }
