@@ -11,6 +11,7 @@ let reconnectTimer;
 let sessionRunning = false;
 let activeSegmentId = null;
 let historySegmentId = null;
+let historySealTimer;
 const segmentVersions = new Map();
 let preferences = {
   source_language: "zh-CN",
@@ -105,6 +106,7 @@ function handleEvent(event) {
 }
 
 function resetCaptions() {
+  window.clearTimeout(historySealTimer);
   activeSegmentId = null;
   historySegmentId = null;
   segmentVersions.clear();
@@ -126,17 +128,54 @@ function createCard(segmentId) {
 function archiveCurrent() {
   const current = stack.querySelector(".caption-card.current");
   if (!current || activeSegmentId === null) return;
+  window.clearTimeout(historySealTimer);
   stack.querySelector(".caption-card.history")?.remove();
   historySegmentId = activeSegmentId;
   activeSegmentId = null;
   current.className = "caption-card history";
-  current.querySelector(".phase").textContent = "上一段 · 已封存";
-  current.querySelector(".latency").textContent = "";
   stack.prepend(current);
+  if (current.dataset.state === "final") {
+    sealHistory(current, finalHistoryPhase(current));
+  } else {
+    markHistoryFinalizing(current);
+  }
+}
+
+function markHistoryFinalizing(card) {
+  card.dataset.sealed = "false";
+  card.classList.add("finalizing");
+  card.classList.remove("translation-pending");
+  card.querySelector(".phase").textContent = "上一段 · LLM 终稿处理中";
+  card.querySelector(".latency").textContent = "最长 3 秒";
+  const pendingSegmentId = historySegmentId;
+  historySealTimer = window.setTimeout(() => {
+    if (historySegmentId !== pendingSegmentId || card.dataset.sealed === "true") return;
+    sealHistory(card, "上一段 · 快速译文 · 已封存");
+  }, 3000);
+}
+
+function finalHistoryPhase(card) {
+  return card.dataset.llmApplied === "true"
+    ? "上一段 · LLM 终稿 · 已封存"
+    : "上一段 · 最终译文 · 已封存";
+}
+
+function sealHistory(card, phase) {
+  window.clearTimeout(historySealTimer);
+  card.dataset.sealed = "true";
+  card.dataset.state = "history";
+  card.classList.remove("finalizing", "translation-pending");
+  card.querySelector(".phase").textContent = phase;
+  card.querySelector(".latency").textContent = "";
 }
 
 function cardForEvent(event) {
-  if (event.segment_id === historySegmentId) return null;
+  if (event.segment_id === historySegmentId) {
+    const history = stack.querySelector(".caption-card.history");
+    return history?.dataset.sealed !== "true" && event.state === "final"
+      ? history
+      : null;
+  }
   if (event.segment_id === activeSegmentId) {
     return stack.querySelector(".caption-card.current");
   }
@@ -161,7 +200,11 @@ function renderCaption(event) {
 
   const card = cardForEvent(event);
   if (!card) return;
+  const finalizingHistory = event.segment_id === historySegmentId;
   waiting.hidden = true;
+
+  card.dataset.state = event.state;
+  card.dataset.llmApplied = String(event.llm_applied);
 
   const source = card.querySelector(".source");
   const translation = card.querySelector(".translation");
@@ -183,14 +226,20 @@ function renderCaption(event) {
     draft: "当前段 · 快速译文",
     final: event.llm_applied ? "当前段 · LLM 终稿" : "当前段 · 最终译文",
   };
-  card.querySelector(".phase").textContent = phases[event.state];
+  card.querySelector(".phase").textContent = finalizingHistory
+    ? event.llm_applied
+      ? "上一段 · LLM 终稿"
+      : "上一段 · 最终译文"
+    : phases[event.state];
   card.querySelector(".latency").textContent = holdTranslation
     ? "等待新译文"
     : event.latency_ms
       ? `${event.latency_ms} ms`
       : "实时";
 
-  if (event.state === "final" && event.segment_id === activeSegmentId) archiveCurrent();
+  if (event.state === "final" && finalizingHistory) {
+    sealHistory(card, finalHistoryPhase(card));
+  }
 }
 
 startButton.addEventListener("click", async () => {

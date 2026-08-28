@@ -122,6 +122,14 @@ body.disconnected .live-dot { background: #ff7379; }
   opacity: 0.58;
 }
 
+.caption-card.history.finalizing {
+  background: rgba(36, 36, 43, 0.72);
+  border-color: rgba(240, 183, 88, 0.18);
+  opacity: 0.72;
+}
+
+.caption-card.history.finalizing .caption-meta { color: rgba(225, 190, 128, 0.72); }
+
 .caption-meta {
   display: flex;
   align-items: center;

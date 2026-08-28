@@ -26,6 +26,7 @@ let reconnectTimer;
 let sessionActive = false;
 let activeSegmentId = null;
 let historySegmentId = null;
+let historySealTimer;
 const segmentVersions = new Map();
 
 function otherLocale(locale) {
@@ -110,6 +111,7 @@ function handleEvent(event) {
   if (event.type === "session_status") {
     if (event.running && !sessionActive) {
       sessionActive = true;
+      window.clearTimeout(historySealTimer);
       activeSegmentId = null;
       historySegmentId = null;
       segmentVersions.clear();
@@ -176,18 +178,47 @@ function setCaptionRole(article, role) {
 function archiveCurrentCaption() {
   const current = elements.captions.querySelector(".caption-current");
   if (!current || activeSegmentId === null) return;
+  window.clearTimeout(historySealTimer);
   elements.captions.querySelector(".caption-history")?.remove();
   historySegmentId = activeSegmentId;
   activeSegmentId = null;
   setCaptionRole(current, "history");
-  freezeHistoryCaption(current);
   elements.captions.prepend(current);
+  if (current.dataset.state === "final") {
+    freezeHistoryCaption(current, finalHistoryPhase(current));
+  } else {
+    markHistoryFinalizing(current);
+  }
 }
 
-function freezeHistoryCaption(article) {
-  article.dataset.state = "history";
+function markHistoryFinalizing(article) {
+  article.dataset.sealed = "false";
+  article.classList.add("finalizing");
   article.classList.remove("edited", "translation-pending");
-  article.querySelector(".phase").textContent = "已完成";
+  article.querySelector(".phase").textContent = "LLM 终稿处理中";
+  article.querySelector(".latency").textContent = "最长 3 秒";
+  for (const textarea of article.querySelectorAll("textarea")) {
+    textarea.readOnly = true;
+  }
+  const pendingSegmentId = historySegmentId;
+  historySealTimer = window.setTimeout(() => {
+    if (historySegmentId !== pendingSegmentId || article.dataset.sealed === "true") return;
+    freezeHistoryCaption(article, "快速译文 · 已封存");
+  }, 3000);
+}
+
+function finalHistoryPhase(article) {
+  return article.dataset.llmApplied === "true"
+    ? "LLM 终稿 · 已封存"
+    : "最终译文 · 已封存";
+}
+
+function freezeHistoryCaption(article, phase = "已封存") {
+  window.clearTimeout(historySealTimer);
+  article.dataset.sealed = "true";
+  article.dataset.state = "history";
+  article.classList.remove("edited", "translation-pending", "finalizing");
+  article.querySelector(".phase").textContent = phase;
   article.querySelector(".latency").textContent = "";
   for (const textarea of article.querySelectorAll("textarea")) {
     textarea.readOnly = true;
@@ -196,7 +227,10 @@ function freezeHistoryCaption(article) {
 
 function captionForEvent(event) {
   if (event.segment_id === historySegmentId) {
-    return elements.captions.querySelector(".caption-history");
+    const history = elements.captions.querySelector(".caption-history");
+    return history?.dataset.sealed !== "true" && event.state === "final"
+      ? history
+      : null;
   }
   if (event.segment_id === activeSegmentId) {
     return elements.captions.querySelector(".caption-current");
@@ -214,9 +248,9 @@ function captionForEvent(event) {
 }
 
 function renderCaption(event) {
-  // Keep one mutable current segment and one replaceable history segment.
-  // An archived segment is immutable, and an older segment can never replace
-  // either of the two newer cards.
+  // Keep one mutable current segment and one replaceable previous segment.
+  // The previous segment may accept exactly one final LLM result before it is
+  // sealed. Once sealed, older or late results can never modify it.
   const knownRevision = segmentVersions.get(event.segment_id) ?? -1;
   if (knownRevision >= event.revision) return;
   segmentVersions.set(event.segment_id, event.revision);
@@ -224,11 +258,7 @@ function renderCaption(event) {
 
   const article = captionForEvent(event);
   if (!article) return;
-  if (event.segment_id === historySegmentId) {
-    // A history card is an immutable snapshot. Results that finish after the
-    // segment has moved upward must never change its text, size, or styling.
-    return;
-  }
+  const finalizingHistory = event.segment_id === historySegmentId;
   if (article.classList.contains("edited")) return;
 
   article.dataset.state = event.state;
@@ -236,6 +266,7 @@ function renderCaption(event) {
   article.dataset.sourceLanguage = event.source_language;
   article.dataset.targetLanguage = event.target_language;
   article.dataset.originalSource = event.source_text;
+  article.dataset.llmApplied = String(event.llm_applied);
 
   const source = article.querySelector(".source");
   const translation = article.querySelector(".translation");
@@ -270,8 +301,8 @@ function renderCaption(event) {
       ? `${event.latency_ms} ms`
       : "实时";
 
-  if (event.state === "final" && event.segment_id === activeSegmentId) {
-    archiveCurrentCaption();
+  if (event.state === "final" && finalizingHistory) {
+    freezeHistoryCaption(article, finalHistoryPhase(article));
   }
 }
 

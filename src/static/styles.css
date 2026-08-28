@@ -193,6 +193,11 @@ select:focus, input:focus, textarea:focus { border-color: #756aff; box-shadow: 0
   transform-origin: center bottom;
   transition: none;
 }
+.caption-history.finalizing {
+  border-color: rgba(240, 183, 88, .2);
+  opacity: .72;
+}
+.caption-history.finalizing .phase { color: #d8aa61; }
 .caption-history .translation { color: #d5d7df; font-size: 16px; }
 .caption-history .caption-actions { display: none; }
 .caption[data-state="partial"] { opacity: .72; border-style: dashed; }
