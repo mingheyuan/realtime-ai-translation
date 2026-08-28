@@ -44,6 +44,20 @@ async function jsonRequest(url, options = {}) {
   return body;
 }
 
+function delay(milliseconds) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+async function waitForSessionStopped() {
+  for (let attempt = 0; attempt < 45; attempt += 1) {
+    const state = await jsonRequest("/api/overlay/state");
+    if (!state.running) return;
+    if (attempt === 10) statusLabel.textContent = "正在完成当前句终稿…";
+    await delay(200);
+  }
+  throw new Error("停止超时，请检查服务状态");
+}
+
 async function refreshOverlayState() {
   try {
     const state = await jsonRequest("/api/overlay/state");
@@ -235,9 +249,12 @@ stopButton.addEventListener("click", async () => {
   statusLabel.textContent = "正在结束当前句…";
   try {
     await jsonRequest("/api/session/stop", { method: "POST" });
+    await waitForSessionStopped();
+    setRunning(false);
+    statusLabel.textContent = "已停止 · 可以重新开始";
   } catch (error) {
-    setRunning(true);
-    statusLabel.textContent = error.message;
+    await refreshOverlayState();
+    if (sessionRunning) statusLabel.textContent = error.message;
   }
 });
 

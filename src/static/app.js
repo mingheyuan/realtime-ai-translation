@@ -67,6 +67,20 @@ function showToast(message, tone = "normal") {
   );
 }
 
+function delay(milliseconds) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+async function waitForSessionStopped() {
+  for (let attempt = 0; attempt < 45; attempt += 1) {
+    const state = await jsonRequest("/api/overlay/state");
+    if (!state.running) return;
+    if (attempt === 10) setStatus("正在完成当前句终稿…");
+    await delay(200);
+  }
+  throw new Error("停止超时，请检查服务状态");
+}
+
 function connectSocket() {
   window.clearTimeout(reconnectTimer);
   const protocol = location.protocol === "https:" ? "wss:" : "ws:";
@@ -299,9 +313,20 @@ elements.stop.addEventListener("click", async () => {
   setStatus("正在结束当前句…");
   try {
     await jsonRequest("/api/session/stop", { method: "POST" });
+    await waitForSessionStopped();
+    sessionActive = false;
+    setRunning(false);
+    setStatus("会话已结束");
   } catch (error) {
-    setRunning(true);
-    showToast(error.message, "error");
+    try {
+      const state = await jsonRequest("/api/overlay/state");
+      sessionActive = state.running;
+      setRunning(state.running);
+      setStatus(state.running ? error.message : "会话已结束");
+    } catch {
+      setRunning(true);
+      showToast(error.message, "error");
+    }
   }
 });
 

@@ -498,12 +498,35 @@ async fn run_session(
     if let Err(error) = bridge.stop().await {
         warn!(session_id = %id, reason = %error, "speech bridge stop failed");
     }
-    while jobs.join_next().await.is_some() {}
+    let aborted_jobs = drain_translation_jobs(&mut jobs, Duration::from_secs(3)).await;
+    if aborted_jobs > 0 {
+        warn!(
+            session_id = %id,
+            aborted_jobs,
+            "translation cleanup exceeded stop deadline"
+        );
+    }
     state.emit(ServerEvent::SessionStatus {
         running: false,
         message: "会话已结束".to_owned(),
     });
     info!(session_id = %id, "translation session stopped");
+}
+
+async fn drain_translation_jobs(jobs: &mut JoinSet<()>, max_wait: Duration) -> usize {
+    let completed = tokio::time::timeout(max_wait, async {
+        while jobs.join_next().await.is_some() {}
+    })
+    .await
+    .is_ok();
+    if completed {
+        return 0;
+    }
+
+    let aborted_jobs = jobs.len();
+    jobs.abort_all();
+    while jobs.join_next().await.is_some() {}
+    aborted_jobs
 }
 
 fn spawn_translation(
@@ -857,10 +880,10 @@ mod tests {
         http::{Request, StatusCode},
     };
     use tempfile::TempDir;
-    use tokio::time::timeout;
+    use tokio::{task::JoinSet, time::timeout};
     use tower::ServiceExt;
 
-    use super::{event_revision, process_snapshot, router, AppState};
+    use super::{drain_translation_jobs, event_revision, process_snapshot, router, AppState};
     use crate::{
         config::{AppConfig, LlmConfig},
         domain::{CaptionState, GlossaryEntry, SegmentSnapshot, ServerEvent, StartSessionRequest},
@@ -941,6 +964,17 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[tokio::test]
+    async fn stop_cleanup_aborts_translation_jobs_after_deadline() {
+        let mut jobs = JoinSet::new();
+        jobs.spawn(std::future::pending());
+
+        let aborted = drain_translation_jobs(&mut jobs, Duration::from_millis(10)).await;
+
+        assert_eq!(aborted, 1);
+        assert!(jobs.is_empty());
     }
 
     #[tokio::test]
