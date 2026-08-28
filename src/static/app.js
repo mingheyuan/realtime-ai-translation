@@ -203,8 +203,9 @@ function metricDelta(current, baseline, definition) {
 
 function renderMetrics(response) {
   latestMetricsResponse = response;
-  const metrics = response.current || response.last_completed;
   const baseline = response.baseline;
+  const showingBaselineOnly = !response.current && !response.last_completed && baseline;
+  const metrics = response.current || response.last_completed || baseline;
   elements.metricsGrid.replaceChildren();
   if (!metrics) {
     elements.metricsSummary.textContent = "尚无会话数据";
@@ -214,19 +215,24 @@ function renderMetrics(response) {
     return;
   }
 
-  elements.metricsSummary.textContent = metrics.running
-    ? `采样中 · ${metrics.finalized_segments} 段`
-    : `最近会话 · ${metrics.finalized_segments} 段`;
-  elements.metricsSession.textContent =
-    `${metrics.asr_engine} · ${metrics.source_language}→${metrics.target_language} · ` +
-    `${(metrics.duration_ms / 1000).toFixed(1)} 秒 · ${metrics.session_id.slice(0, 8)}`;
-  elements.metricsBaseline.disabled = metrics.running;
+  elements.metricsSummary.textContent = showingBaselineOnly
+    ? `三次中位基线 · ${metrics.finalized_segments} 段`
+    : metrics.running
+      ? `采样中 · ${metrics.finalized_segments} 段`
+      : `最近会话 · ${metrics.finalized_segments} 段`;
+  elements.metricsSession.textContent = showingBaselineOnly
+    ? `${metrics.asr_engine} · ${metrics.source_language}→${metrics.target_language} · 已持久化基线`
+    : `${metrics.asr_engine} · ${metrics.source_language}→${metrics.target_language} · ` +
+      `${(metrics.duration_ms / 1000).toFixed(1)} 秒 · ${metrics.session_id.slice(0, 8)}`;
+  elements.metricsBaseline.disabled = metrics.running || showingBaselineOnly;
   elements.metricsExport.disabled = false;
 
   for (const definition of metricDefinitions) {
     const value = nestedMetricValue(metrics, definition.path);
     const baselineValue = baseline ? nestedMetricValue(baseline, definition.path) : null;
-    const delta = metricDelta(value, baselineValue, definition);
+    const delta = showingBaselineOnly
+      ? { text: "已保存基线", tone: "neutral" }
+      : metricDelta(value, baselineValue, definition);
     const card = document.createElement("div");
     card.className = "metric-card";
     card.innerHTML = `<span></span><strong></strong><small></small>`;
