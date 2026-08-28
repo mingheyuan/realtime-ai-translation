@@ -82,7 +82,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
 
         let panel = OverlayPanel(
             contentRect: NSRect(x: 0, y: 0, width: overlayWidth, height: overlayHeight),
-            styleMask: [.borderless, .nonactivatingPanel, .resizable],
+            // Text fields inside WKWebView need a normally activating panel to
+            // become first responder and receive keyboard events.
+            styleMask: [.borderless, .resizable],
             backing: .buffered,
             defer: false
         )
@@ -145,7 +147,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         panel.setFrameAutosaveName(frameAutosaveName)
         self.panel = panel
         self.webView = webView
-        panel.orderFrontRegardless()
+        NSApp.activate(ignoringOtherApps: true)
+        panel.makeKeyAndOrderFront(nil)
 
         let urlString = CommandLine.arguments.dropFirst().first
             ?? "http://127.0.0.1:8765/overlay"
@@ -160,7 +163,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         _ sender: NSApplication,
         hasVisibleWindows flag: Bool
     ) -> Bool {
-        panel?.orderFrontRegardless()
+        NSApp.activate(ignoringOtherApps: true)
+        panel?.makeKeyAndOrderFront(nil)
         webView?.reload()
         return true
     }
