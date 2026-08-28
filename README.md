@@ -46,7 +46,7 @@ MarianMT 本身不是流式模型，不能安全地只翻译 ASR 新增的几个
 
 - Apple Speech / Sherpa-ONNX：尽快把声音变成可修订的源语言文字。
 - MarianMT：本地专用翻译模型，生成低延迟草稿。
-- LLM：只在断句后结合最近两句和术语表做保守润色，可以完全关闭。
+- LLM：只在断句后结合最近两句、术语表和可选参考背景，保守纠正 ASR 原文并生成终稿译文，可以完全关闭。
 
 ## 当前功能
 
@@ -151,7 +151,7 @@ RT_TRANSLATION_LLM_MODEL=your-model \
 cargo run
 ```
 
-`RT_TRANSLATION_LLM_BASE_URL` 也可以指向本地的 Ollama、LM Studio 或其他兼容服务。程序调用 `/chat/completions`，要求模型只返回翻译结果。
+`RT_TRANSLATION_LLM_BASE_URL` 也可以指向本地的 Ollama、LM Studio 或其他兼容服务。程序调用 `/chat/completions`，要求模型返回包含 `corrected_source` 和 `translation` 的 JSON；旧的纯译文响应仍会作为兼容降级处理。
 
 项目启动时会自动读取根目录的 `.env.local`，且真实配置已被 Git 忽略。可以复制 `.env.example` 后填写本机 key。使用 DeepSeek 快速非思考模式时推荐：
 
@@ -166,7 +166,7 @@ RT_TRANSLATION_LLM_TIMEOUT=12
 
 `RT_TRANSLATION_LLM_THINKING_DISABLED=1` 会在 Chat Completions 请求中发送 `{"thinking":{"type":"disabled"}}`，避免实时字幕等待默认思考过程。
 
-LLM 终稿采用受 Saymore 启发的保守转换策略：只翻译当前段；上一段仅用于代词、术语和语气消歧；草稿译文仅作为可纠正候选；个人词典只在当前原文确实命中或高度符合发音时使用。模型必须保留问题、否定、条件、不确定性、数字、实体和未完成语义，并在输出前检查信息覆盖和上下文越界，最终只返回目标语言正文。
+LLM 终稿采用受 Saymore 启发的保守转换策略：只处理当前段；上一段仅用于代词、术语和语气消歧；草稿译文仅作为可纠正候选；个人词典和参考背景可以帮助修复当前 ASR 中的同音词、实体名与中英混读错误。模型必须同时返回纠正后的原文和目标语言译文，并保留问题、否定、条件、不确定性、数字、实体和未完成语义。后端会用长度与字符编辑距离拒绝激进的原文改写；旧的纯译文响应也仍然兼容。
 
 ## 个人词典如何生效
 

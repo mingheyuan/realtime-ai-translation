@@ -719,6 +719,7 @@ async fn process_snapshot(
         assembled
     };
     let mut llm_applied = false;
+    let mut final_source = normalized.clone();
     drop(translation_permit);
     state.emit(ServerEvent::Caption {
         segment_id: snapshot.segment_id,
@@ -758,6 +759,9 @@ async fn process_snapshot(
         {
             Ok(output) => {
                 translation_text = output.text;
+                if let Some(corrected_source) = output.corrected_source {
+                    final_source = corrected_source;
+                }
                 llm_applied = output.applied;
             }
             Err(error) => state.emit(ServerEvent::Error {
@@ -766,7 +770,7 @@ async fn process_snapshot(
             }),
         }
         let mut context = state.inner.context.lock().await;
-        context.push_back((normalized.clone(), translation_text.clone()));
+        context.push_back((final_source.clone(), translation_text.clone()));
         while context.len() > 2 {
             context.pop_front();
         }
@@ -777,7 +781,7 @@ async fn process_snapshot(
         segment_id: snapshot.segment_id,
         revision: event_revision(snapshot.revision, 2),
         state: CaptionState::Final,
-        source_text: normalized,
+        source_text: final_source,
         translation_text,
         source_language: request.source_language,
         target_language: request.target_language,
