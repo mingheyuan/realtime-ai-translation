@@ -56,29 +56,35 @@
               </select>
             </label>
           </div>
-          <div class="reference-context">
-            <label for="reference-text">
-              <span>直接背景文字</span>
-            </label>
-            <textarea
-              id="reference-text"
-              rows="2"
-              placeholder="例如：这是一次 AI 产品会议，Aurora 是产品名称，固定英文写法为 Aurora Live。"
-              spellcheck="false"
-            ></textarea>
-            <small>直接文字优先；也可以和下面的文档一起使用。</small>
-            <label for="reference-document-path">
-              <span>参考文档路径</span>
-            </label>
-            <input
-              id="reference-document-path"
-              type="text"
-              placeholder="输入 .txt、.docx 或 .xlsx 的本地路径（可留空）"
-              autocomplete="off"
-              spellcheck="false"
-            />
-            <small>仅用于 LLM 终稿；不会拖慢 ASR 或快速译文。</small>
-          </div>
+          <details class="reference-details" id="reference-details">
+            <summary>
+              <span>LLM 背景（可选）</span>
+              <small>直接文字或 .txt / .docx / .xlsx</small>
+            </summary>
+            <div class="reference-context">
+              <label for="reference-text">
+                <span>直接背景文字</span>
+              </label>
+              <textarea
+                id="reference-text"
+                rows="2"
+                placeholder="例如：这是一次 AI 产品会议，Aurora 是产品名称，固定英文写法为 Aurora Live。"
+                spellcheck="false"
+              ></textarea>
+              <small>直接文字优先；也可以和下面的文档一起使用。</small>
+              <label for="reference-document-path">
+                <span>参考文档路径</span>
+              </label>
+              <input
+                id="reference-document-path"
+                type="text"
+                placeholder="输入 .txt、.docx 或 .xlsx 的本地路径（可留空）"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <small>仅用于 LLM 终稿；不会拖慢 ASR 或快速译文。</small>
+            </div>
+          </details>
           <div class="actions">
             <button class="primary" id="start" type="button">
               <span class="mic" aria-hidden="true"></span>

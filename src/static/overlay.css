@@ -97,6 +97,25 @@ body.disconnected .live-dot { background: #ff7379; }
 .settings-bar select:disabled, .settings-bar button:disabled { opacity: 0.36; cursor: default; }
 .settings-hint { margin-left: auto; white-space: nowrap; }
 
+.overlay-reference-details summary {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 17px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.045);
+  color: rgba(205, 209, 220, 0.48);
+  background: rgba(255, 255, 255, 0.012);
+  cursor: pointer;
+  font-size: 9px;
+  list-style: none;
+  user-select: none;
+}
+.overlay-reference-details summary::-webkit-details-marker { display: none; }
+.overlay-reference-details summary::before { content: "›"; color: #918aff; font-size: 14px; transition: transform .15s; }
+.overlay-reference-details[open] summary::before { transform: rotate(90deg); }
+.overlay-reference-details summary small { margin-left: auto; color: rgba(205, 209, 220, 0.28); font-size: 8px; }
+
 .reference-bar {
   height: 34px;
   display: grid;
@@ -125,13 +144,14 @@ body.disconnected .live-dot { background: #ff7379; }
 .reference-bar span { white-space: nowrap; }
 
 .caption-stack {
-  height: calc(100% - 136px);
+  height: calc(100% - 96px);
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
   gap: 8px;
   padding: 10px;
 }
+body.reference-expanded .caption-stack { height: calc(100% - 164px); }
 
 .caption-card {
   min-height: 86px;

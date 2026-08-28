@@ -11,6 +11,7 @@ const elements = {
   audioSourceHint: document.querySelector("#audio-source-hint"),
   referenceDocumentPath: document.querySelector("#reference-document-path"),
   referenceText: document.querySelector("#reference-text"),
+  referenceDetails: document.querySelector("#reference-details"),
   source: document.querySelector("#source-language"),
   target: document.querySelector("#target-language"),
   status: document.querySelector("#session-status"),
@@ -587,6 +588,9 @@ async function loadPreferences() {
     elements.asrEngine.value = preferences.asr_engine;
     elements.referenceDocumentPath.value = preferences.reference_document_path || "";
     elements.referenceText.value = preferences.reference_text || "";
+    if (preferences.reference_text || preferences.reference_document_path) {
+      elements.referenceDetails.open = true;
+    }
     sessionActive = state.running;
     setRunning(state.running);
     updateAsrPresentation();

@@ -56,12 +56,35 @@ main { padding-top: 30px; }
   backdrop-filter: blur(18px);
 }
 .direction { display: grid; grid-template-columns: 1fr 1.25fr 1fr 42px 1fr; gap: 14px; align-items: end; }
+.reference-details {
+  margin-top: 14px;
+  border: 1px solid rgba(255,255,255,.075);
+  border-radius: 12px;
+  background: rgba(9,12,18,.45);
+}
+.reference-details summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  padding: 0 13px;
+  cursor: pointer;
+  color: #8f95a6;
+  font-size: 11px;
+  font-weight: 650;
+  list-style: none;
+}
+.reference-details summary::-webkit-details-marker { display: none; }
+.reference-details summary::before { content: "›"; color: #7770ed; font-size: 17px; transition: transform .15s; }
+.reference-details[open] summary::before { transform: rotate(90deg); }
+.reference-details summary small { margin-left: auto; color: #5f6678; font-size: 9px; font-weight: 500; }
+.reference-details[open] summary { border-bottom: 1px solid rgba(255,255,255,.055); }
 .reference-context {
   display: grid;
   grid-template-columns: 118px minmax(240px, 1fr) auto;
   align-items: center;
   gap: 12px;
-  margin-top: 16px;
+  padding: 14px 13px;
 }
 .reference-context label > span { margin: 0; }
 .reference-context input { height: 38px; }

@@ -8,6 +8,7 @@ const audioSelect = document.querySelector("#overlay-audio");
 const directionButton = document.querySelector("#overlay-direction");
 const referenceDocumentInput = document.querySelector("#overlay-reference-document");
 const referenceTextInput = document.querySelector("#overlay-reference-text");
+const referenceDetails = document.querySelector("#overlay-reference-details");
 
 let socket;
 let reconnectTimer;
@@ -42,6 +43,10 @@ function updateSettingsControls() {
   audioSelect.value = preferences.audio_source;
   referenceDocumentInput.value = preferences.reference_document_path || "";
   referenceTextInput.value = preferences.reference_text || "";
+  if (preferences.reference_text || preferences.reference_document_path) {
+    referenceDetails.open = true;
+  }
+  document.body.classList.toggle("reference-expanded", referenceDetails.open);
   directionButton.textContent = preferences.source_language.startsWith("zh")
     ? "中 → 英"
     : "英 → 中";
@@ -347,6 +352,10 @@ referenceTextInput.addEventListener("change", () => {
     ...preferences,
     reference_text: referenceTextInput.value.trim(),
   });
+});
+
+referenceDetails.addEventListener("toggle", () => {
+  document.body.classList.toggle("reference-expanded", referenceDetails.open);
 });
 
 stopButton.addEventListener("click", async () => {
