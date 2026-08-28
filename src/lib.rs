@@ -4,6 +4,7 @@ pub mod dictionary;
 pub mod document;
 pub mod domain;
 pub mod llm;
+pub mod metrics;
 pub mod segment;
 pub mod server;
 pub mod streaming;

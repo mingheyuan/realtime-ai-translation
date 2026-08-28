@@ -37,6 +37,10 @@ use crate::{
         StartSessionRequest,
     },
     llm::{LlmRefinementInput, LlmRefiner},
+    metrics::{
+        MetricsResponse, MetricsStore, SegmentFinalizationReason, SessionMetricDescriptor,
+        SessionMetricsSnapshot,
+    },
     segment::SegmentManager,
     streaming::TranslationStateMachine,
     translation::{
@@ -62,6 +66,7 @@ struct AppStateInner {
     overlay_preferences: Mutex<StartSessionRequest>,
     context: Mutex<VecDeque<(String, String)>>,
     streaming: Mutex<TranslationStateMachine>,
+    metrics: Mutex<MetricsStore>,
 }
 
 struct SessionHandle {
@@ -71,6 +76,7 @@ struct SessionHandle {
 
 impl AppState {
     pub fn new(config: AppConfig) -> anyhow::Result<Self> {
+        let metrics_path = config.database_path.with_file_name("metrics-baseline.json");
         let asr = AsrProviderRegistry::new(
             config.speech_bridge_path.clone(),
             config.sherpa_bridge_path.clone(),
@@ -107,6 +113,7 @@ impl AppState {
                 }),
                 context: Mutex::new(VecDeque::with_capacity(4)),
                 streaming: Mutex::new(TranslationStateMachine::default()),
+                metrics: Mutex::new(MetricsStore::new(metrics_path)),
             }),
         })
     }
@@ -161,6 +168,8 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/session/start", post(start_session))
         .route("/api/session/stop", post(stop_session))
+        .route("/api/metrics", get(metrics))
+        .route("/api/metrics/baseline", post(save_metrics_baseline))
         .route(
             "/api/dictionary",
             get(list_dictionary).post(upsert_dictionary),
@@ -384,6 +393,22 @@ async fn start_session(
         stop: Some(stop_tx),
     });
     drop(session);
+    state
+        .inner
+        .metrics
+        .lock()
+        .await
+        .begin(SessionMetricDescriptor {
+            session_id: id,
+            asr_engine: request.asr_engine,
+            audio_source: request.audio_source,
+            source_language: request.source_language.clone(),
+            target_language: request.target_language.clone(),
+            reference_context_chars: reference_document
+                .as_deref()
+                .map(|document| document.content.chars().count())
+                .unwrap_or(0),
+        });
     let task_state = state.clone();
     tokio::spawn(async move {
         run_session(
@@ -423,6 +448,23 @@ async fn stop_session(State(state): State<AppState>) -> Json<SessionResponse> {
     })
 }
 
+async fn metrics(State(state): State<AppState>) -> Json<MetricsResponse> {
+    Json(state.inner.metrics.lock().await.response())
+}
+
+async fn save_metrics_baseline(
+    State(state): State<AppState>,
+) -> Result<Json<SessionMetricsSnapshot>, ApiError> {
+    let baseline = state
+        .inner
+        .metrics
+        .lock()
+        .await
+        .save_latest_as_baseline()
+        .map_err(|error| ApiError::internal(format!("无法保存指标基线：{error}")))?;
+    Ok(Json(baseline))
+}
+
 async fn run_session(
     state: AppState,
     id: Uuid,
@@ -444,6 +486,7 @@ async fn run_session(
     {
         Ok(bridge) => bridge,
         Err(error) => {
+            state.inner.metrics.lock().await.finish();
             state.emit(ServerEvent::Error {
                 code: "asr_start_failed".to_owned(),
                 message: error.to_string(),
@@ -476,6 +519,10 @@ async fn run_session(
             _ = ticker.tick() => {
                 if manager.should_finalize(Instant::now()) {
                     if let Some(snapshot) = manager.finalize() {
+                        state.inner.metrics.lock().await.record_segment_final(
+                            &snapshot,
+                            SegmentFinalizationReason::IdleOrBoundary,
+                        );
                         emit_source_snapshot(&state, &request, &snapshot);
                         spawn_translation(
                             &mut jobs,
@@ -490,6 +537,7 @@ async fn run_session(
             event = bridge.next_event() => {
                 match event {
                     Ok(AsrEvent::Ready { locale }) => {
+                        state.inner.metrics.lock().await.record_asr_ready();
                         state.emit(ServerEvent::SessionStatus {
                             running: true,
                             message: format!(
@@ -501,6 +549,12 @@ async fn run_session(
                     }
                     Ok(AsrEvent::Partial { text }) => {
                         if let Some(snapshot) = manager.update(&text, Instant::now()) {
+                            state
+                                .inner
+                                .metrics
+                                .lock()
+                                .await
+                                .record_asr_snapshot(&snapshot, true);
                             emit_source_snapshot(&state, &request, &snapshot);
                             if last_preview.elapsed()
                                 >= Duration::from_millis(
@@ -520,9 +574,19 @@ async fn run_session(
                     }
                     Ok(AsrEvent::Final { text }) => {
                         if let Some(snapshot) = manager.update(&text, Instant::now()) {
+                            state
+                                .inner
+                                .metrics
+                                .lock()
+                                .await
+                                .record_asr_snapshot(&snapshot, false);
                             emit_source_snapshot(&state, &request, &snapshot);
                         }
                         if let Some(snapshot) = manager.finalize() {
+                            state.inner.metrics.lock().await.record_segment_final(
+                                &snapshot,
+                                SegmentFinalizationReason::AsrFinal,
+                            );
                             emit_source_snapshot(&state, &request, &snapshot);
                             spawn_translation(
                                 &mut jobs,
@@ -553,6 +617,12 @@ async fn run_session(
     }
 
     if let Some(snapshot) = manager.finalize() {
+        state
+            .inner
+            .metrics
+            .lock()
+            .await
+            .record_segment_final(&snapshot, SegmentFinalizationReason::SessionStop);
         emit_source_snapshot(&state, &request, &snapshot);
         spawn_translation(
             &mut jobs,
@@ -573,6 +643,7 @@ async fn run_session(
             "translation cleanup exceeded stop deadline"
         );
     }
+    state.inner.metrics.lock().await.finish();
     state.emit(ServerEvent::SessionStatus {
         running: false,
         message: "会话已结束".to_owned(),
@@ -603,8 +674,9 @@ fn spawn_translation(
     reference_document: Option<Arc<ReferenceDocument>>,
     snapshot: SegmentSnapshot,
 ) {
+    let queued_at = Instant::now();
     jobs.spawn(async move {
-        process_snapshot(state, request, reference_document, snapshot).await;
+        process_snapshot_at(state, request, reference_document, snapshot, queued_at).await;
     });
 }
 
@@ -626,13 +698,23 @@ fn emit_source_snapshot(
     });
 }
 
+#[cfg(test)]
 async fn process_snapshot(
     state: AppState,
     request: StartSessionRequest,
     reference_document: Option<Arc<ReferenceDocument>>,
     snapshot: SegmentSnapshot,
 ) {
-    let started = Instant::now();
+    process_snapshot_at(state, request, reference_document, snapshot, Instant::now()).await;
+}
+
+async fn process_snapshot_at(
+    state: AppState,
+    request: StartSessionRequest,
+    reference_document: Option<Arc<ReferenceDocument>>,
+    snapshot: SegmentSnapshot,
+    started: Instant,
+) {
     let translation_permit = if snapshot.state == CaptionState::Final {
         match state.inner.translation_gate.clone().acquire_owned().await {
             Ok(permit) => permit,
@@ -721,6 +803,7 @@ async fn process_snapshot(
     let mut llm_applied = false;
     let mut final_source = normalized.clone();
     drop(translation_permit);
+    let draft_ready_ms = started.elapsed().as_millis().max(draft_latency_ms);
     state.emit(ServerEvent::Caption {
         segment_id: snapshot.segment_id,
         revision: event_revision(snapshot.revision, 1),
@@ -730,8 +813,14 @@ async fn process_snapshot(
         source_language: request.source_language.clone(),
         target_language: request.target_language.clone(),
         llm_applied: false,
-        latency_ms: started.elapsed().as_millis().max(draft_latency_ms),
+        latency_ms: draft_ready_ms,
     });
+    state
+        .inner
+        .metrics
+        .lock()
+        .await
+        .record_draft_ready(draft_ready_ms, snapshot.state == CaptionState::Final);
     if snapshot.state == CaptionState::Final {
         let context = state
             .inner
@@ -758,16 +847,30 @@ async fn process_snapshot(
             .await
         {
             Ok(output) => {
+                if output.applied {
+                    state.inner.metrics.lock().await.record_llm(
+                        output.latency_ms,
+                        output.input_chars,
+                        output.reference_chars,
+                        &normalized,
+                        output.corrected_source.as_deref(),
+                        &translation_text,
+                        &output.text,
+                    );
+                }
                 translation_text = output.text;
                 if let Some(corrected_source) = output.corrected_source {
                     final_source = corrected_source;
                 }
                 llm_applied = output.applied;
             }
-            Err(error) => state.emit(ServerEvent::Error {
-                code: "llm_refinement_failed".to_owned(),
-                message: error.to_string(),
-            }),
+            Err(error) => {
+                state.inner.metrics.lock().await.record_llm_failure();
+                state.emit(ServerEvent::Error {
+                    code: "llm_refinement_failed".to_owned(),
+                    message: error.to_string(),
+                });
+            }
         }
         let mut context = state.inner.context.lock().await;
         context.push_back((final_source.clone(), translation_text.clone()));
@@ -777,6 +880,7 @@ async fn process_snapshot(
     } else {
         return;
     }
+    let final_ready_ms = started.elapsed().as_millis().max(draft_latency_ms);
     state.emit(ServerEvent::Caption {
         segment_id: snapshot.segment_id,
         revision: event_revision(snapshot.revision, 2),
@@ -786,8 +890,14 @@ async fn process_snapshot(
         source_language: request.source_language,
         target_language: request.target_language,
         llm_applied,
-        latency_ms: started.elapsed().as_millis().max(draft_latency_ms),
+        latency_ms: final_ready_ms,
     });
+    state
+        .inner
+        .metrics
+        .lock()
+        .await
+        .record_final_ready(final_ready_ms);
 }
 
 async fn translate_or_fallback(
@@ -807,8 +917,22 @@ async fn translate_or_fallback(
         )
         .await
     {
-        Ok(output) => output,
+        Ok(output) => {
+            state
+                .inner
+                .metrics
+                .lock()
+                .await
+                .record_translation(output.latency_ms);
+            output
+        }
         Err(error) => {
+            state
+                .inner
+                .metrics
+                .lock()
+                .await
+                .record_translation_failure();
             state.emit(ServerEvent::Error {
                 code: "translation_failed".to_owned(),
                 message: error.to_string(),
@@ -857,6 +981,12 @@ async fn record_correction(
     Json(correction): Json<CorrectionRequest>,
 ) -> Result<Json<Option<GlossaryEntry>>, ApiError> {
     let learned = state.inner.dictionary.learn_correction(&correction)?;
+    state
+        .inner
+        .metrics
+        .lock()
+        .await
+        .record_user_correction(&correction);
     if learned.is_some() {
         state.emit(ServerEvent::DictionaryChanged);
     }
@@ -1120,6 +1250,25 @@ mod tests {
             "on_session_start"
         );
         assert_eq!(health_json["asr_providers"][1]["id"], "sherpa_onnx");
+
+        let metrics = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/metrics")
+                    .body(Body::empty())
+                    .expect("metrics request"),
+            )
+            .await
+            .expect("metrics response");
+        assert_eq!(metrics.status(), StatusCode::OK);
+        let metrics_body = to_bytes(metrics.into_body(), 64 * 1024)
+            .await
+            .expect("metrics body");
+        let metrics_json: serde_json::Value =
+            serde_json::from_slice(&metrics_body).expect("metrics JSON");
+        assert!(metrics_json["current"].is_null());
+        assert!(metrics_json["last_completed"].is_null());
 
         let overlay = app
             .clone()

@@ -48,6 +48,8 @@ pub struct LlmOutput {
     pub corrected_source: Option<String>,
     pub applied: bool,
     pub latency_ms: u128,
+    pub input_chars: usize,
+    pub reference_chars: usize,
 }
 
 pub struct LlmRefinementInput<'a> {
@@ -91,6 +93,8 @@ impl LlmRefiner {
                 corrected_source: None,
                 applied: false,
                 latency_ms: 0,
+                input_chars: 0,
+                reference_chars: 0,
             });
         }
         let started = Instant::now();
@@ -103,6 +107,13 @@ impl LlmRefiner {
             input.glossary,
             input.reference_context,
         );
+        let input_chars =
+            TRANSLATION_REFINEMENT_PROMPT.chars().count() + user_content.chars().count();
+        let reference_chars = input
+            .reference_context
+            .map(str::chars)
+            .map(Iterator::count)
+            .unwrap_or(0);
         let request = ChatRequest {
             model: self.config.model.clone(),
             temperature: 0.0,
@@ -155,6 +166,8 @@ impl LlmRefiner {
             corrected_source: parsed.corrected_source,
             applied: true,
             latency_ms: started.elapsed().as_millis(),
+            input_chars,
+            reference_chars,
         })
     }
 }

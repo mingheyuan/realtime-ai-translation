@@ -117,6 +117,30 @@
           </div>
         </section>
 
+        <details class="metrics-details" id="metrics-details">
+          <summary>
+            <span><strong>客观指标</strong><small>延迟 · 稳定性 · 修订率</small></span>
+            <span class="metrics-summary" id="metrics-summary">尚无会话数据</span>
+          </summary>
+          <div class="metrics-body">
+            <div class="metrics-toolbar">
+              <div>
+                <strong id="metrics-session">等待采样</strong>
+                <small>只有使用同一段音频、相同语言和相同设置，前后对比才有效。</small>
+              </div>
+              <div class="metrics-actions">
+                <button class="secondary" id="metrics-refresh" type="button">刷新</button>
+                <button class="secondary" id="metrics-baseline" type="button">设为基线</button>
+                <button class="secondary" id="metrics-export" type="button">导出 JSON</button>
+              </div>
+            </div>
+            <div class="metrics-grid" id="metrics-grid"></div>
+            <p class="metrics-footnote">
+              “首段文字”包含开始后等待说话的时间，不等同于模型推理延迟；准确性以 ASR 已显示文字回改率、LLM 修订率和用户手工纠正率作为可重复代理指标。
+            </p>
+          </div>
+        </details>
+
         <section class="caption-stage">
           <div class="section-heading">
             <div>

@@ -24,6 +24,13 @@ const elements = {
   dictionaryList: document.querySelector("#dictionary-list"),
   backdrop: document.querySelector("#backdrop"),
   toast: document.querySelector("#toast"),
+  metricsDetails: document.querySelector("#metrics-details"),
+  metricsSummary: document.querySelector("#metrics-summary"),
+  metricsSession: document.querySelector("#metrics-session"),
+  metricsGrid: document.querySelector("#metrics-grid"),
+  metricsRefresh: document.querySelector("#metrics-refresh"),
+  metricsBaseline: document.querySelector("#metrics-baseline"),
+  metricsExport: document.querySelector("#metrics-export"),
 };
 
 let socket;
@@ -33,6 +40,24 @@ let activeSegmentId = null;
 let historySegmentId = null;
 let historySealTimer;
 const segmentVersions = new Map();
+let latestMetricsResponse = null;
+
+const metricDefinitions = [
+  { label: "ASR 启动", path: "asr_startup_ms", unit: "ms", lower: true },
+  { label: "首段文字", path: "first_asr_text_ms", unit: "ms", lower: true },
+  { label: "ASR 更新 P95", path: "asr_partial_interval_ms.p95", unit: "ms", lower: true },
+  { label: "ASR 回改率", path: "asr_revision_rate_percent", unit: "%", lower: true },
+  { label: "断句等待 P50", path: "finalization_silence_ms.p50", unit: "ms", lower: true },
+  { label: "短碎片率", path: "short_segment_rate_percent", unit: "%", lower: true },
+  { label: "MarianMT P95", path: "translation_model_latency_ms.p95", unit: "ms", lower: true },
+  { label: "终句草稿 P95", path: "final_draft_ready_ms.p95", unit: "ms", lower: true },
+  { label: "LLM P95", path: "llm_latency_ms.p95", unit: "ms", lower: true },
+  { label: "终稿就绪 P95", path: "final_ready_ms.p95", unit: "ms", lower: true },
+  { label: "LLM 输入均值", path: "llm_input_characters.average", unit: "字", lower: true },
+  { label: "LLM 原文修订", path: "llm_source_revision_rate_percent", unit: "%" },
+  { label: "用户原文纠正", path: "user_source_revision_rate_percent", unit: "%", lower: true },
+  { label: "用户译文纠正", path: "user_translation_revision_rate_percent", unit: "%", lower: true },
+];
 
 function otherLocale(locale) {
   return locale.startsWith("zh") ? "en-US" : "zh-CN";
@@ -150,6 +175,76 @@ function handleEvent(event) {
     setStatus(event.message);
   }
   if (event.type === "dictionary_changed") loadDictionary();
+  if (elements.metricsDetails.open && event.type === "session_status") loadMetrics();
+}
+
+function nestedMetricValue(metrics, path) {
+  return path.split(".").reduce((value, key) => value?.[key], metrics);
+}
+
+function formattedMetric(value, unit) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "—";
+  const numeric = Number(value);
+  const digits = unit === "%" || unit === "字" ? 1 : 0;
+  return `${numeric.toFixed(digits)} ${unit}`;
+}
+
+function metricDelta(current, baseline, definition) {
+  if (current === null || current === undefined || baseline === null || baseline === undefined) {
+    return { text: "无基线", tone: "neutral" };
+  }
+  const delta = Number(current) - Number(baseline);
+  if (Math.abs(delta) < 0.05) return { text: "与基线相同", tone: "neutral" };
+  const prefix = delta > 0 ? "+" : "";
+  const digits = definition.unit === "ms" ? 0 : 1;
+  const tone = definition.lower ? (delta < 0 ? "better" : "worse") : "neutral";
+  return { text: `较基线 ${prefix}${delta.toFixed(digits)} ${definition.unit}`, tone };
+}
+
+function renderMetrics(response) {
+  latestMetricsResponse = response;
+  const metrics = response.current || response.last_completed;
+  const baseline = response.baseline;
+  elements.metricsGrid.replaceChildren();
+  if (!metrics) {
+    elements.metricsSummary.textContent = "尚无会话数据";
+    elements.metricsSession.textContent = "完成一次翻译会话后生成摘要";
+    elements.metricsBaseline.disabled = true;
+    elements.metricsExport.disabled = !baseline;
+    return;
+  }
+
+  elements.metricsSummary.textContent = metrics.running
+    ? `采样中 · ${metrics.finalized_segments} 段`
+    : `最近会话 · ${metrics.finalized_segments} 段`;
+  elements.metricsSession.textContent =
+    `${metrics.asr_engine} · ${metrics.source_language}→${metrics.target_language} · ` +
+    `${(metrics.duration_ms / 1000).toFixed(1)} 秒 · ${metrics.session_id.slice(0, 8)}`;
+  elements.metricsBaseline.disabled = metrics.running;
+  elements.metricsExport.disabled = false;
+
+  for (const definition of metricDefinitions) {
+    const value = nestedMetricValue(metrics, definition.path);
+    const baselineValue = baseline ? nestedMetricValue(baseline, definition.path) : null;
+    const delta = metricDelta(value, baselineValue, definition);
+    const card = document.createElement("div");
+    card.className = "metric-card";
+    card.innerHTML = `<span></span><strong></strong><small></small>`;
+    card.querySelector("span").textContent = definition.label;
+    card.querySelector("strong").textContent = formattedMetric(value, definition.unit);
+    const comparison = card.querySelector("small");
+    comparison.textContent = delta.text;
+    comparison.dataset.tone = delta.tone;
+    elements.metricsGrid.append(card);
+  }
+}
+
+async function loadMetrics() {
+  try {
+    renderMetrics(await jsonRequest("/api/metrics"));
+  } catch (error) {
+    showToast(error.message, "error");
+  }
 }
 
 function captionTemplate(event, role) {
@@ -448,6 +543,38 @@ function setDictionaryOpen(open) {
 elements.dictionaryToggle.addEventListener("click", () => setDictionaryOpen(true));
 elements.dictionaryClose.addEventListener("click", () => setDictionaryOpen(false));
 elements.backdrop.addEventListener("click", () => setDictionaryOpen(false));
+
+elements.metricsDetails.addEventListener("toggle", () => {
+  if (elements.metricsDetails.open) loadMetrics();
+});
+elements.metricsRefresh.addEventListener("click", loadMetrics);
+elements.metricsBaseline.addEventListener("click", async () => {
+  try {
+    await jsonRequest("/api/metrics/baseline", { method: "POST", body: "{}" });
+    await loadMetrics();
+    showToast("最近完成的会话已保存为客观指标基线");
+  } catch (error) {
+    showToast(error.message, "error");
+  }
+});
+elements.metricsExport.addEventListener("click", async () => {
+  try {
+    const response = latestMetricsResponse || (await jsonRequest("/api/metrics"));
+    const blob = new Blob([JSON.stringify(response, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `translation-metrics-${new Date().toISOString().replaceAll(":", "-")}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    showToast(error.message, "error");
+  }
+});
+
+window.setInterval(() => {
+  if (elements.metricsDetails.open && sessionActive) loadMetrics();
+}, 1500);
 
 elements.dictionaryForm.addEventListener("submit", async (event) => {
   event.preventDefault();
