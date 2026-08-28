@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     fs,
     path::PathBuf,
     time::{Instant, SystemTime, UNIX_EPOCH},
@@ -108,12 +108,13 @@ pub struct SessionMetricsSnapshot {
 pub struct MetricsResponse {
     pub current: Option<SessionMetricsSnapshot>,
     pub last_completed: Option<SessionMetricsSnapshot>,
+    pub recent_completed: Vec<SessionMetricsSnapshot>,
     pub baseline: Option<SessionMetricsSnapshot>,
 }
 
 pub struct MetricsStore {
     current: Option<SessionMetrics>,
-    last_completed: Option<SessionMetrics>,
+    completed: VecDeque<SessionMetrics>,
     baseline: Option<SessionMetricsSnapshot>,
     baseline_path: PathBuf,
 }
@@ -125,7 +126,7 @@ impl MetricsStore {
             .and_then(|content| serde_json::from_slice(&content).ok());
         Self {
             current: None,
-            last_completed: None,
+            completed: VecDeque::with_capacity(10),
             baseline,
             baseline_path,
         }
@@ -224,7 +225,7 @@ impl MetricsStore {
     }
 
     pub fn record_user_correction(&mut self, correction: &CorrectionRequest) {
-        if let Some(current) = self.current.as_mut().or(self.last_completed.as_mut()) {
+        if let Some(current) = self.current.as_mut().or(self.completed.back_mut()) {
             current.user_corrections = current.user_corrections.saturating_add(1);
             add_revision(
                 &correction.original_source,
@@ -243,7 +244,10 @@ impl MetricsStore {
 
     pub fn finish(&mut self) {
         if let Some(current) = self.current.take() {
-            self.last_completed = Some(current);
+            self.completed.push_back(current);
+            while self.completed.len() > 10 {
+                self.completed.pop_front();
+            }
         }
     }
 
@@ -251,9 +255,14 @@ impl MetricsStore {
         MetricsResponse {
             current: self.current.as_ref().map(|current| current.snapshot(true)),
             last_completed: self
-                .last_completed
-                .as_ref()
+                .completed
+                .back()
                 .map(|completed| completed.snapshot(false)),
+            recent_completed: self
+                .completed
+                .iter()
+                .map(|completed| completed.snapshot(false))
+                .collect(),
             baseline: self.baseline.clone(),
         }
     }
@@ -263,10 +272,23 @@ impl MetricsStore {
             return Err(std::io::Error::other("请先结束当前会话，再保存稳定基线"));
         }
         let latest = self
-            .last_completed
-            .as_ref()
-            .map(|completed| completed.snapshot(false))
+            .completed
+            .back()
             .ok_or_else(|| std::io::Error::other("还没有可设为基线的会话指标"))?;
+        let compatible = self
+            .completed
+            .iter()
+            .rev()
+            .filter(|candidate| candidate.is_compatible_with(latest))
+            .take(3)
+            .map(|completed| completed.snapshot(false))
+            .collect::<Vec<_>>();
+        if compatible.len() < 3 {
+            return Err(std::io::Error::other(
+                "需要先完成 3 次 ASR、音频来源、语言方向和背景长度一致的会话",
+            ));
+        }
+        let latest = aggregate_snapshots(&compatible).map_err(std::io::Error::other)?;
         let encoded = serde_json::to_vec_pretty(&latest).map_err(std::io::Error::other)?;
         fs::write(&self.baseline_path, encoded)?;
         self.baseline = Some(latest.clone());
@@ -361,6 +383,14 @@ impl SessionMetrics {
 
     fn elapsed_ms(&self) -> u128 {
         self.started_at.elapsed().as_millis()
+    }
+
+    fn is_compatible_with(&self, other: &Self) -> bool {
+        self.descriptor.asr_engine == other.descriptor.asr_engine
+            && self.descriptor.audio_source == other.descriptor.audio_source
+            && self.descriptor.source_language == other.descriptor.source_language
+            && self.descriptor.target_language == other.descriptor.target_language
+            && self.descriptor.reference_context_chars == other.descriptor.reference_context_chars
     }
 
     fn record_asr_snapshot(&mut self, snapshot: &SegmentSnapshot, is_partial: bool) {
@@ -509,6 +539,72 @@ fn percentile(sorted: &[u128], percentile: usize) -> Option<u128> {
     sorted.get(index).copied()
 }
 
+fn aggregate_snapshots(
+    snapshots: &[SessionMetricsSnapshot],
+) -> Result<SessionMetricsSnapshot, serde_json::Error> {
+    let values = snapshots
+        .iter()
+        .map(serde_json::to_value)
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut aggregate: SessionMetricsSnapshot = serde_json::from_value(median_json(&values))?;
+    aggregate.running = false;
+    aggregate.captured_at_unix_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    Ok(aggregate)
+}
+
+fn median_json(values: &[serde_json::Value]) -> serde_json::Value {
+    let Some(template) = values.last() else {
+        return serde_json::Value::Null;
+    };
+    match template {
+        serde_json::Value::Object(object) => serde_json::Value::Object(
+            object
+                .keys()
+                .map(|key| {
+                    let children = values
+                        .iter()
+                        .filter_map(|value| value.get(key).cloned())
+                        .collect::<Vec<_>>();
+                    (key.clone(), median_json(&children))
+                })
+                .collect(),
+        ),
+        serde_json::Value::Number(_) => median_number(values).unwrap_or_else(|| template.clone()),
+        serde_json::Value::Null => median_number(values).unwrap_or(serde_json::Value::Null),
+        _ => template.clone(),
+    }
+}
+
+fn median_number(values: &[serde_json::Value]) -> Option<serde_json::Value> {
+    let unsigned = values
+        .iter()
+        .filter_map(serde_json::Value::as_u64)
+        .collect::<Vec<_>>();
+    if !unsigned.is_empty()
+        && values
+            .iter()
+            .filter(|value| !value.is_null())
+            .all(|value| value.as_u64().is_some())
+    {
+        let mut sorted = unsigned;
+        sorted.sort_unstable();
+        return Some(serde_json::Value::Number(sorted[sorted.len() / 2].into()));
+    }
+
+    let mut floating = values
+        .iter()
+        .filter_map(serde_json::Value::as_f64)
+        .collect::<Vec<_>>();
+    if floating.is_empty() {
+        return None;
+    }
+    floating.sort_by(f64::total_cmp);
+    serde_json::Number::from_f64(floating[floating.len() / 2]).map(serde_json::Value::Number)
+}
+
 fn percentage(numerator: usize, denominator: usize) -> Option<f64> {
     (denominator > 0).then(|| numerator as f64 * 100.0 / denominator as f64)
 }
@@ -636,17 +732,36 @@ mod tests {
         let directory = TempDir::new().expect("metrics directory");
         let path = directory.path().join("baseline.json");
         let mut metrics = MetricsStore::new(path.clone());
-        metrics.begin(descriptor());
-        metrics.record_asr_snapshot(&snapshot("这是一个足够长的测试句子"), true);
-        metrics.record_segment_final(
-            &snapshot("这是一个足够长的测试句子"),
-            SegmentFinalizationReason::AsrFinal,
-        );
-        metrics.finish();
+        let mut compatible_descriptor = descriptor();
+        for latency in [100, 300, 200] {
+            compatible_descriptor.session_id = Uuid::new_v4();
+            metrics.begin(compatible_descriptor.clone());
+            metrics.record_asr_snapshot(&snapshot("这是一个足够长的测试句子"), true);
+            metrics.record_segment_final(
+                &snapshot("这是一个足够长的测试句子"),
+                SegmentFinalizationReason::AsrFinal,
+            );
+            metrics.record_translation(latency);
+            metrics.finish();
+        }
         let baseline = metrics.save_latest_as_baseline().expect("save baseline");
 
         assert_eq!(baseline.finalized_segments, 1);
+        assert_eq!(baseline.translation_model_latency_ms.p50, Some(200));
         let reloaded = MetricsStore::new(path).response();
         assert_eq!(reloaded.baseline, Some(baseline));
+    }
+
+    #[test]
+    fn baseline_requires_three_compatible_sessions() {
+        let directory = TempDir::new().expect("metrics directory");
+        let mut metrics = MetricsStore::new(directory.path().join("baseline.json"));
+        metrics.begin(descriptor());
+        metrics.finish();
+
+        let error = metrics
+            .save_latest_as_baseline()
+            .expect_err("one session is not a stable baseline");
+        assert!(error.to_string().contains("3 次"));
     }
 }

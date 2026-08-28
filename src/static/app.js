@@ -552,7 +552,7 @@ elements.metricsBaseline.addEventListener("click", async () => {
   try {
     await jsonRequest("/api/metrics/baseline", { method: "POST", body: "{}" });
     await loadMetrics();
-    showToast("最近完成的会话已保存为客观指标基线");
+    showToast("最近 3 次配置一致会话的中位结果已保存为基线");
   } catch (error) {
     showToast(error.message, "error");
   }
