@@ -29,7 +29,8 @@ use crate::{
     config::AppConfig,
     dictionary::{DictionaryError, DictionaryStore},
     document::{
-        load_reference_document, validate_reference_path, DocumentError, ReferenceDocument,
+        combine_reference_context, load_reference_document, validate_reference_path, DocumentError,
+        ReferenceDocument,
     },
     domain::{
         CaptionState, CorrectionRequest, GlossaryEntry, SegmentSnapshot, ServerEvent,
@@ -102,6 +103,7 @@ impl AppState {
                     audio_source: crate::domain::AudioSource::Microphone,
                     asr_engine: crate::domain::AsrEngine::AppleSpeech,
                     reference_document_path: String::new(),
+                    reference_text: String::new(),
                 }),
                 context: Mutex::new(VecDeque::with_capacity(4)),
                 streaming: Mutex::new(TranslationStateMachine::default()),
@@ -748,7 +750,7 @@ async fn process_snapshot(
                 target_language: &request.target_language,
                 previous_context: &context,
                 glossary: &glossary,
-                reference_document: reference_document
+                reference_context: reference_document
                     .as_deref()
                     .map(|document| document.content.as_str()),
             })
@@ -873,9 +875,13 @@ async fn load_session_reference(
     request: &StartSessionRequest,
 ) -> Result<Option<Arc<ReferenceDocument>>, ApiError> {
     let path = request.reference_document_path.clone();
-    let document = tokio::task::spawn_blocking(move || load_reference_document(&path))
-        .await
-        .map_err(|error| ApiError::internal(format!("参考文档读取任务失败：{error}")))??;
+    let direct_text = request.reference_text.clone();
+    let document = tokio::task::spawn_blocking(move || {
+        let document = load_reference_document(&path)?;
+        Ok::<_, DocumentError>(combine_reference_context(&direct_text, document))
+    })
+    .await
+    .map_err(|error| ApiError::internal(format!("参考背景读取任务失败：{error}")))??;
     Ok(document.map(Arc::new))
 }
 
@@ -1010,6 +1016,7 @@ mod tests {
             audio_source: crate::domain::AudioSource::Microphone,
             asr_engine: crate::domain::AsrEngine::AppleSpeech,
             reference_document_path: String::new(),
+            reference_text: String::new(),
         };
 
         process_snapshot(
@@ -1207,7 +1214,8 @@ mod tests {
                             "source_language": "zh-CN",
                             "target_language": "en-US",
                             "audio_source": "microphone",
-                            "reference_document_path": reference_path.to_string_lossy()
+                            "reference_document_path": reference_path.to_string_lossy(),
+                            "reference_text": "产品属于实时字幕领域"
                         })
                         .to_string(),
                     ))
@@ -1234,6 +1242,10 @@ mod tests {
         assert_eq!(
             saved_overlay_preferences_json["preferences"]["reference_document_path"],
             reference_path.to_string_lossy().as_ref()
+        );
+        assert_eq!(
+            saved_overlay_preferences_json["preferences"]["reference_text"],
+            "产品属于实时字幕领域"
         );
 
         let entry = serde_json::json!({

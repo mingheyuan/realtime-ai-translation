@@ -86,6 +86,33 @@ pub fn load_reference_document(raw_path: &str) -> Result<Option<ReferenceDocumen
     }))
 }
 
+pub fn combine_reference_context(
+    direct_text: &str,
+    document: Option<ReferenceDocument>,
+) -> Option<ReferenceDocument> {
+    let direct_text = normalize_whitespace(direct_text);
+    if direct_text.is_empty() {
+        return document;
+    }
+    let (combined, name, already_truncated) = match document {
+        Some(document) => (
+            format!(
+                "[直接输入]\n{direct_text}\n[参考文档：{}]\n{}",
+                document.name, document.content
+            ),
+            format!("直接输入 + {}", document.name),
+            document.truncated,
+        ),
+        None => (direct_text, "直接输入".to_owned(), false),
+    };
+    let (content, truncated) = truncate_chars(combined, MAX_EXTRACTED_CHARS);
+    Some(ReferenceDocument {
+        name,
+        content,
+        truncated: already_truncated || truncated,
+    })
+}
+
 fn expand_home(path: &str) -> PathBuf {
     let Some(relative) = path.strip_prefix("~/") else {
         return PathBuf::from(path);
@@ -331,5 +358,22 @@ mod tests {
             load_reference_document(path.to_str().expect("UTF-8 path")),
             Err(DocumentError::UnsupportedFormat)
         ));
+    }
+
+    #[test]
+    fn direct_text_is_prioritized_when_combined_with_a_document() {
+        let combined = combine_reference_context(
+            "产品名是 Aurora",
+            Some(ReferenceDocument {
+                name: "terms.txt".to_owned(),
+                content: "Aurora Live 是固定译法".to_owned(),
+                truncated: false,
+            }),
+        )
+        .expect("combined context");
+
+        assert_eq!(combined.name, "直接输入 + terms.txt");
+        assert!(combined.content.starts_with("[直接输入]\n产品名是 Aurora"));
+        assert!(combined.content.contains("[参考文档：terms.txt]"));
     }
 }

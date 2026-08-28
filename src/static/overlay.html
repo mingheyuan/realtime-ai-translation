@@ -33,7 +33,18 @@
         <span class="settings-hint">右侧斜纹缩放 · 运行中需先停止才能切换</span>
       </div>
       <div class="reference-bar">
-        <label for="overlay-reference-document">LLM 背景</label>
+        <label for="overlay-reference-text">背景文字</label>
+        <input
+          id="overlay-reference-text"
+          type="text"
+          placeholder="直接输入 LLM 参考背景（可留空）"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <span>移开焦点保存</span>
+      </div>
+      <div class="reference-bar">
+        <label for="overlay-reference-document">文档路径</label>
         <input
           id="overlay-reference-document"
           type="text"

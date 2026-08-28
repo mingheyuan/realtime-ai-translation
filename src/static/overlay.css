@@ -125,7 +125,7 @@ body.disconnected .live-dot { background: #ff7379; }
 .reference-bar span { white-space: nowrap; }
 
 .caption-stack {
-  height: calc(100% - 102px);
+  height: calc(100% - 136px);
   display: flex;
   flex-direction: column;
   justify-content: flex-end;

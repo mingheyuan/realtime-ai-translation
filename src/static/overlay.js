@@ -7,6 +7,7 @@ const asrSelect = document.querySelector("#overlay-asr");
 const audioSelect = document.querySelector("#overlay-audio");
 const directionButton = document.querySelector("#overlay-direction");
 const referenceDocumentInput = document.querySelector("#overlay-reference-document");
+const referenceTextInput = document.querySelector("#overlay-reference-text");
 
 let socket;
 let reconnectTimer;
@@ -21,6 +22,7 @@ let preferences = {
   audio_source: "microphone",
   asr_engine: "apple_speech",
   reference_document_path: "",
+  reference_text: "",
 };
 
 function setRunning(running) {
@@ -31,6 +33,7 @@ function setRunning(running) {
   audioSelect.disabled = running;
   directionButton.disabled = running;
   referenceDocumentInput.disabled = running;
+  referenceTextInput.disabled = running;
   document.body.classList.toggle("session-running", running);
 }
 
@@ -38,6 +41,7 @@ function updateSettingsControls() {
   asrSelect.value = preferences.asr_engine;
   audioSelect.value = preferences.audio_source;
   referenceDocumentInput.value = preferences.reference_document_path || "";
+  referenceTextInput.value = preferences.reference_text || "";
   directionButton.textContent = preferences.source_language.startsWith("zh")
     ? "中 → 英"
     : "英 → 中";
@@ -293,6 +297,7 @@ async function savePreferences(nextPreferences) {
   audioSelect.disabled = true;
   directionButton.disabled = true;
   referenceDocumentInput.disabled = true;
+  referenceTextInput.disabled = true;
   try {
     const state = await jsonRequest("/api/overlay/state", {
       method: "POST",
@@ -309,6 +314,7 @@ async function savePreferences(nextPreferences) {
     audioSelect.disabled = sessionRunning;
     directionButton.disabled = sessionRunning;
     referenceDocumentInput.disabled = sessionRunning;
+    referenceTextInput.disabled = sessionRunning;
   }
 }
 
@@ -333,6 +339,13 @@ referenceDocumentInput.addEventListener("change", () => {
   savePreferences({
     ...preferences,
     reference_document_path: referenceDocumentInput.value.trim(),
+  });
+});
+
+referenceTextInput.addEventListener("change", () => {
+  savePreferences({
+    ...preferences,
+    reference_text: referenceTextInput.value.trim(),
   });
 });
 

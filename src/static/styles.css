@@ -65,6 +65,18 @@ main { padding-top: 30px; }
 }
 .reference-context label > span { margin: 0; }
 .reference-context input { height: 38px; }
+.reference-context textarea {
+  width: 100%;
+  min-height: 58px;
+  padding: 10px 13px;
+  resize: vertical;
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 11px;
+  outline: none;
+  color: #f6f7fb;
+  background: #0d1017;
+  line-height: 1.45;
+}
 .reference-context small { color: #666e81; font-size: 10px; white-space: nowrap; }
 label > span {
   display: block;

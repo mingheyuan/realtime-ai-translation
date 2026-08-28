@@ -10,6 +10,7 @@ const elements = {
   audioSource: document.querySelector("#audio-source"),
   audioSourceHint: document.querySelector("#audio-source-hint"),
   referenceDocumentPath: document.querySelector("#reference-document-path"),
+  referenceText: document.querySelector("#reference-text"),
   source: document.querySelector("#source-language"),
   target: document.querySelector("#target-language"),
   status: document.querySelector("#session-status"),
@@ -44,6 +45,7 @@ function setRunning(running) {
   elements.asrEngine.disabled = running;
   elements.audioSource.disabled = running;
   elements.referenceDocumentPath.disabled = running;
+  elements.referenceText.disabled = running;
   elements.swap.disabled = running;
   document.body.classList.toggle("recording", running);
 }
@@ -56,6 +58,7 @@ function setStopping() {
   elements.asrEngine.disabled = true;
   elements.audioSource.disabled = true;
   elements.referenceDocumentPath.disabled = true;
+  elements.referenceText.disabled = true;
   elements.swap.disabled = true;
   document.body.classList.remove("recording");
 }
@@ -351,6 +354,7 @@ elements.start.addEventListener("click", async () => {
         audio_source: elements.audioSource.value,
         asr_engine: elements.asrEngine.value,
         reference_document_path: elements.referenceDocumentPath.value.trim(),
+        reference_text: elements.referenceText.value.trim(),
       }),
     });
   } catch (error) {
@@ -392,6 +396,7 @@ elements.overlayOpen.addEventListener("click", async () => {
         audio_source: elements.audioSource.value,
         asr_engine: elements.asrEngine.value,
         reference_document_path: elements.referenceDocumentPath.value.trim(),
+        reference_text: elements.referenceText.value.trim(),
       }),
     });
     showToast("悬浮字幕已打开；可拖动到任意位置");
@@ -581,6 +586,7 @@ async function loadPreferences() {
     elements.audioSource.value = preferences.audio_source;
     elements.asrEngine.value = preferences.asr_engine;
     elements.referenceDocumentPath.value = preferences.reference_document_path || "";
+    elements.referenceText.value = preferences.reference_text || "";
     sessionActive = state.running;
     setRunning(state.running);
     updateAsrPresentation();

@@ -99,6 +99,8 @@ pub struct StartSessionRequest {
     pub asr_engine: AsrEngine,
     #[serde(default)]
     pub reference_document_path: String,
+    #[serde(default)]
+    pub reference_text: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -176,6 +178,7 @@ mod tests {
         assert_eq!(request.audio_source, AudioSource::Microphone);
         assert_eq!(request.asr_engine, AsrEngine::AppleSpeech);
         assert!(request.reference_document_path.is_empty());
+        assert!(request.reference_text.is_empty());
     }
 
     #[test]
