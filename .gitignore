@@ -9,3 +9,4 @@ data/
 dist/
 target/
 model-worker/.cache/
+models/

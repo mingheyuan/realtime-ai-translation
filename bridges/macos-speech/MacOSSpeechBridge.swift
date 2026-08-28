@@ -100,6 +100,16 @@ private enum AudioSource: String {
     case systemAudio = "system_audio"
 }
 
+private enum BridgeMode: String {
+    case appleSpeech = "apple"
+    case pcm
+}
+
+private protocol AudioBufferConsumer: AnyObject {
+    func append(_ buffer: AVAudioPCMBuffer)
+    func stop()
+}
+
 private final class RecognitionController {
     private let recognizer: SFSpeechRecognizer
     private let contextualTerms: [String]
@@ -238,8 +248,58 @@ private final class RecognitionController {
     }
 }
 
+extension RecognitionController: AudioBufferConsumer {}
+
+private final class PCMStreamingController: AudioBufferConsumer {
+    private let stateLock = NSLock()
+    private let outputQueue = DispatchQueue(
+        label: "realtime-translation.pcm-output",
+        qos: .userInteractive
+    )
+    private var accepting = false
+
+    func markReady(locale: String, sampleRate: Double) {
+        emit([
+            "type": "ready",
+            "locale": locale,
+            "sample_rate": Int(sampleRate),
+            "encoding": "float32le"
+        ])
+        stateLock.lock()
+        accepting = true
+        stateLock.unlock()
+    }
+
+    func append(_ buffer: AVAudioPCMBuffer) {
+        stateLock.lock()
+        let canAccept = accepting
+        stateLock.unlock()
+        guard canAccept,
+              buffer.frameLength > 0,
+              let samples = buffer.floatChannelData?[0] else { return }
+
+        let data = Data(
+            bytes: samples,
+            count: Int(buffer.frameLength) * MemoryLayout<Float>.size
+        )
+        outputQueue.async {
+            outputLock.lock()
+            FileHandle.standardOutput.write(data)
+            outputLock.unlock()
+        }
+    }
+
+    func stop() {
+        stateLock.lock()
+        accepting = false
+        stateLock.unlock()
+        outputQueue.sync {}
+    }
+}
+
 private final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
-    private let controller: RecognitionController
+    private let consumer: AudioBufferConsumer
+    private let onUnexpectedStop: (Error) -> Void
     private let sampleQueue = DispatchQueue(
         label: "realtime-translation.system-audio",
         qos: .userInteractive
@@ -248,8 +308,9 @@ private final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelega
     private var stream: SCStream?
     private var stopping = false
 
-    init(controller: RecognitionController) {
-        self.controller = controller
+    init(consumer: AudioBufferConsumer, onUnexpectedStop: @escaping (Error) -> Void) {
+        self.consumer = consumer
+        self.onUnexpectedStop = onUnexpectedStop
     }
 
     func start(completion: @escaping (Error?) -> Void) {
@@ -342,7 +403,7 @@ private final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelega
                   ) else {
                 return
             }
-            controller.append(samples)
+            consumer.append(samples)
         }
     }
 
@@ -352,7 +413,7 @@ private final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelega
         self.stream = nil
         stateLock.unlock()
         if !wasStopping {
-            emit(["type": "error", "message": "System audio capture stopped: \(error.localizedDescription)"])
+            onUnexpectedStop(error)
         }
     }
 }
@@ -374,12 +435,16 @@ private enum SystemAudioError: LocalizedError {
 let localeIdentifier = argumentValues(named: "--locale").first ?? "zh-CN"
 let contextualTerms = argumentValues(named: "--term")
 let audioSourceValue = argumentValues(named: "--audio-source").first ?? "microphone"
+let bridgeModeValue = argumentValues(named: "--mode").first ?? "apple"
 if let socketPath = argumentValues(named: "--socket").first,
    !connectControlSocket(at: socketPath) {
     exit(2)
 }
 guard let audioSource = AudioSource(rawValue: audioSourceValue) else {
     fail("Unsupported audio source: \(audioSourceValue)")
+}
+guard let bridgeMode = BridgeMode(rawValue: bridgeModeValue) else {
+    fail("Unsupported bridge mode: \(bridgeModeValue)")
 }
 
 if audioSource == .microphone, !authorizeMicrophone() {
@@ -388,38 +453,62 @@ if audioSource == .microphone, !authorizeMicrophone() {
     )
 }
 
-let authorization = DispatchSemaphore(value: 0)
-var authorizationStatus = SFSpeechRecognizer.authorizationStatus()
-if authorizationStatus == .notDetermined {
-    SFSpeechRecognizer.requestAuthorization { status in
-        authorizationStatus = status
-        authorization.signal()
+private var recognitionController: RecognitionController?
+private var pcmController: PCMStreamingController?
+private let consumer: AudioBufferConsumer
+
+switch bridgeMode {
+case .appleSpeech:
+    let authorization = DispatchSemaphore(value: 0)
+    var authorizationStatus = SFSpeechRecognizer.authorizationStatus()
+    if authorizationStatus == .notDetermined {
+        SFSpeechRecognizer.requestAuthorization { status in
+            authorizationStatus = status
+            authorization.signal()
+        }
+        if authorization.wait(timeout: .now() + 30) == .timedOut {
+            fail("Speech Recognition authorization timed out")
+        }
     }
-    if authorization.wait(timeout: .now() + 30) == .timedOut {
-        fail("Speech Recognition authorization timed out")
+    guard authorizationStatus == .authorized else {
+        fail(
+            "Speech Recognition permission was not granted. Open System Settings > Privacy & Security > Speech Recognition and enable the app used to launch Realtime AI Translation."
+        )
     }
-}
-guard authorizationStatus == .authorized else {
-    fail(
-        "Speech Recognition permission was not granted. Open System Settings > Privacy & Security > Speech Recognition and enable the app used to launch Realtime AI Translation."
+    guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: localeIdentifier)) else {
+        fail("Apple Speech does not support locale \(localeIdentifier)")
+    }
+    guard recognizer.isAvailable else {
+        fail("Apple Speech is currently unavailable")
+    }
+    let controller = RecognitionController(
+        recognizer: recognizer,
+        contextualTerms: contextualTerms
     )
+    recognitionController = controller
+    consumer = controller
+    controller.start()
+case .pcm:
+    let controller = PCMStreamingController()
+    pcmController = controller
+    consumer = controller
 }
 
-guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: localeIdentifier)) else {
-    fail("Apple Speech does not support locale \(localeIdentifier)")
-}
-guard recognizer.isAvailable else {
-    fail("Apple Speech is currently unavailable")
-}
-
-private let controller = RecognitionController(
-    recognizer: recognizer,
-    contextualTerms: contextualTerms
-)
-controller.start()
 private var microphoneEngine: AVAudioEngine?
 private var microphoneInput: AVAudioInputNode?
 private var systemAudioCapture: SystemAudioCapture?
+
+private func emitReady(sampleRate: Double) {
+    if let pcmController {
+        pcmController.markReady(locale: localeIdentifier, sampleRate: sampleRate)
+    } else {
+        emit(["type": "ready", "locale": localeIdentifier])
+    }
+}
+
+private func stopConsumer() {
+    consumer.stop()
+}
 
 switch audioSource {
 case .microphone:
@@ -427,45 +516,62 @@ case .microphone:
     let input = engine.inputNode
     let format = input.outputFormat(forBus: 0)
     input.installTap(onBus: 0, bufferSize: 512, format: format) { buffer, _ in
-        controller.append(buffer)
+        consumer.append(buffer)
     }
     do {
         engine.prepare()
         try engine.start()
         microphoneEngine = engine
         microphoneInput = input
-        emit(["type": "ready", "locale": localeIdentifier])
+        emitReady(sampleRate: format.sampleRate)
     } catch {
-        controller.stop()
+        stopConsumer()
         fail("Microphone capture failed: \(error.localizedDescription)")
     }
 case .systemAudio:
-    let capture = SystemAudioCapture(controller: controller)
+    let capture = SystemAudioCapture(consumer: consumer) { error in
+        if bridgeMode == .appleSpeech {
+            emit([
+                "type": "error",
+                "message": "System audio capture stopped: \(error.localizedDescription)"
+            ])
+        }
+        stopConsumer()
+        exit(1)
+    }
     systemAudioCapture = capture
     capture.start { error in
         if let error {
-            controller.stop()
+            stopConsumer()
             fail(
                 "System audio capture failed: \(error.localizedDescription). Open System Settings > Privacy & Security > Screen & System Audio Recording, enable the app used to launch Realtime AI Translation, then restart it."
             )
         }
-        emit(["type": "ready", "locale": localeIdentifier])
+        emitReady(sampleRate: 48_000)
     }
 }
 
 DispatchQueue.global(qos: .userInitiated).async {
+    func shutdown() {
+        microphoneEngine?.stop()
+        microphoneInput?.removeTap(onBus: 0)
+        systemAudioCapture?.stop()
+        stopConsumer()
+        let delay = bridgeMode == .pcm ? 0.1 : 2.5
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            exit(0)
+        }
+    }
+
     while let command = readLine() {
         if command.trimmingCharacters(in: .whitespacesAndNewlines) == "stop" {
-            microphoneEngine?.stop()
-            microphoneInput?.removeTap(onBus: 0)
-            systemAudioCapture?.stop()
-            controller.stop()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-                exit(0)
-            }
+            shutdown()
             return
         }
     }
+    // The parent bridge may be killed before it can send a stop command.
+    // Treat socket EOF as an implicit stop so the signed capture app cannot linger.
+    shutdown()
 }
 
 RunLoop.current.run()

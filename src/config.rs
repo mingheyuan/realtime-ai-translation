@@ -43,7 +43,20 @@ impl AppConfig {
         let speech_bridge_path = env::var_os("RT_TRANSLATION_SPEECH_BRIDGE")
             .map(PathBuf::from)
             .unwrap_or_else(|| manifest_dir.join("target/RealtimeTranslationSpeechBridge.app"));
-        let sherpa_bridge_path = env::var_os("RT_TRANSLATION_SHERPA_BRIDGE").map(PathBuf::from);
+        let bundled_sherpa_bridge = manifest_dir.join("scripts/sherpa-onnx-bridge");
+        let bundled_sherpa_model =
+            manifest_dir.join("models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20");
+        let bundled_sherpa_ready = [
+            "tokens.txt",
+            "encoder-epoch-99-avg-1.int8.onnx",
+            "decoder-epoch-99-avg-1.onnx",
+            "joiner-epoch-99-avg-1.int8.onnx",
+        ]
+        .iter()
+        .all(|filename| bundled_sherpa_model.join(filename).is_file());
+        let sherpa_bridge_path = env::var_os("RT_TRANSLATION_SHERPA_BRIDGE")
+            .map(PathBuf::from)
+            .or_else(|| bundled_sherpa_ready.then_some(bundled_sherpa_bridge));
         let overlay_app_path = env::var_os("RT_TRANSLATION_OVERLAY_APP")
             .map(PathBuf::from)
             .unwrap_or_else(|| manifest_dir.join("target/RealtimeTranslationOverlay.app"));
