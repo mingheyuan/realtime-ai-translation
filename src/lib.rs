@@ -1,6 +1,7 @@
 pub mod asr;
 pub mod config;
 pub mod dictionary;
+pub mod document;
 pub mod domain;
 pub mod llm;
 pub mod segment;

@@ -56,6 +56,19 @@
               </select>
             </label>
           </div>
+          <div class="reference-context">
+            <label for="reference-document-path">
+              <span>LLM 参考文档</span>
+            </label>
+            <input
+              id="reference-document-path"
+              type="text"
+              placeholder="输入 .txt、.docx 或 .xlsx 的本地路径（可留空）"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <small>仅用于 LLM 终稿的术语和语境参考；不会拖慢 ASR 或快速译文。</small>
+          </div>
           <div class="actions">
             <button class="primary" id="start" type="button">
               <span class="mic" aria-hidden="true"></span>

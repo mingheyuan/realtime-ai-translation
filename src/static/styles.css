@@ -56,6 +56,16 @@ main { padding-top: 30px; }
   backdrop-filter: blur(18px);
 }
 .direction { display: grid; grid-template-columns: 1fr 1.25fr 1fr 42px 1fr; gap: 14px; align-items: end; }
+.reference-context {
+  display: grid;
+  grid-template-columns: 118px minmax(240px, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+}
+.reference-context label > span { margin: 0; }
+.reference-context input { height: 38px; }
+.reference-context small { color: #666e81; font-size: 10px; white-space: nowrap; }
 label > span {
   display: block;
   margin-bottom: 8px;
@@ -304,6 +314,8 @@ textarea:not([readonly]) { background: rgba(255,255,255,.025); border-color: rgb
   .topbar { min-height: 76px; }
   .brand p, .hint { display: none; }
   .direction { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .reference-context { grid-template-columns: 1fr; gap: 7px; }
+  .reference-context small { white-space: normal; }
   .swap-button { display: none; }
   .actions { flex-wrap: wrap; }
   .session-status { width: 100%; margin: 2px 0 0; }

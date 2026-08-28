@@ -97,8 +97,35 @@ body.disconnected .live-dot { background: #ff7379; }
 .settings-bar select:disabled, .settings-bar button:disabled { opacity: 0.36; cursor: default; }
 .settings-hint { margin-left: auto; white-space: nowrap; }
 
+.reference-bar {
+  height: 34px;
+  display: grid;
+  grid-template-columns: auto minmax(160px, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 0 17px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.055);
+  background: rgba(255, 255, 255, 0.012);
+  color: rgba(205, 209, 220, 0.42);
+  font-size: 9px;
+}
+.reference-bar input {
+  min-width: 0;
+  height: 23px;
+  padding: 0 8px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 7px;
+  outline: none;
+  color: rgba(239, 241, 247, 0.82);
+  background: rgba(255, 255, 255, 0.065);
+  font: 500 10px -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+}
+.reference-bar input:focus { border-color: rgba(126, 115, 255, 0.7); }
+.reference-bar input:disabled { opacity: 0.36; }
+.reference-bar span { white-space: nowrap; }
+
 .caption-stack {
-  height: calc(100% - 68px);
+  height: calc(100% - 102px);
   display: flex;
   flex-direction: column;
   justify-content: flex-end;

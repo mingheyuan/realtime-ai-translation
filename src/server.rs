@@ -28,11 +28,14 @@ use crate::{
     asr::{AsrEvent, AsrProviderRegistry, AsrProviderStatus},
     config::AppConfig,
     dictionary::{DictionaryError, DictionaryStore},
+    document::{
+        load_reference_document, validate_reference_path, DocumentError, ReferenceDocument,
+    },
     domain::{
         CaptionState, CorrectionRequest, GlossaryEntry, SegmentSnapshot, ServerEvent,
         StartSessionRequest,
     },
-    llm::LlmRefiner,
+    llm::{LlmRefinementInput, LlmRefiner},
     segment::SegmentManager,
     streaming::TranslationStateMachine,
     translation::{
@@ -98,6 +101,7 @@ impl AppState {
                     target_language: "en-US".to_owned(),
                     audio_source: crate::domain::AudioSource::Microphone,
                     asr_engine: crate::domain::AsrEngine::AppleSpeech,
+                    reference_document_path: String::new(),
                 }),
                 context: Mutex::new(VecDeque::with_capacity(4)),
                 streaming: Mutex::new(TranslationStateMachine::default()),
@@ -349,6 +353,7 @@ async fn start_session(
     Json(request): Json<StartSessionRequest>,
 ) -> Result<Json<SessionResponse>, ApiError> {
     validate_direction(&request)?;
+    let reference_document = load_session_reference(&request).await?;
     if !state.inner.asr.available(request.asr_engine) {
         let message = match request.asr_engine {
             crate::domain::AsrEngine::AppleSpeech => "Apple Speech bridge 尚未构建或不可用",
@@ -379,7 +384,15 @@ async fn start_session(
     drop(session);
     let task_state = state.clone();
     tokio::spawn(async move {
-        run_session(task_state.clone(), id, request, hotwords, stop_rx).await;
+        run_session(
+            task_state.clone(),
+            id,
+            request,
+            hotwords,
+            reference_document,
+            stop_rx,
+        )
+        .await;
         let mut session = task_state.inner.session.lock().await;
         if session.as_ref().map(|handle| handle.id) == Some(id) {
             *session = None;
@@ -413,6 +426,7 @@ async fn run_session(
     id: Uuid,
     request: StartSessionRequest,
     hotwords: Vec<String>,
+    reference_document: Option<Arc<ReferenceDocument>>,
     mut stop: oneshot::Receiver<()>,
 ) {
     let mut bridge = match state
@@ -447,9 +461,10 @@ async fn run_session(
     state.emit(ServerEvent::SessionStatus {
         running: true,
         message: format!(
-            "正在等待 {}（{}）",
+            "正在等待 {}（{}）{}",
             request.asr_engine.description(),
-            request.audio_source.description()
+            request.audio_source.description(),
+            reference_status(&reference_document),
         ),
     });
 
@@ -460,7 +475,13 @@ async fn run_session(
                 if manager.should_finalize(Instant::now()) {
                     if let Some(snapshot) = manager.finalize() {
                         emit_source_snapshot(&state, &request, &snapshot);
-                        spawn_translation(&mut jobs, state.clone(), request.clone(), snapshot);
+                        spawn_translation(
+                            &mut jobs,
+                            state.clone(),
+                            request.clone(),
+                            reference_document.clone(),
+                            snapshot,
+                        );
                     }
                 }
             }
@@ -484,7 +505,13 @@ async fn run_session(
                                     state.inner.config.preview_interval_ms,
                                 )
                             {
-                                spawn_translation(&mut jobs, state.clone(), request.clone(), snapshot);
+                                spawn_translation(
+                                    &mut jobs,
+                                    state.clone(),
+                                    request.clone(),
+                                    reference_document.clone(),
+                                    snapshot,
+                                );
                                 last_preview = Instant::now();
                             }
                         }
@@ -495,7 +522,13 @@ async fn run_session(
                         }
                         if let Some(snapshot) = manager.finalize() {
                             emit_source_snapshot(&state, &request, &snapshot);
-                            spawn_translation(&mut jobs, state.clone(), request.clone(), snapshot);
+                            spawn_translation(
+                                &mut jobs,
+                                state.clone(),
+                                request.clone(),
+                                reference_document.clone(),
+                                snapshot,
+                            );
                         }
                     }
                     Ok(AsrEvent::Error { message }) => {
@@ -519,7 +552,13 @@ async fn run_session(
 
     if let Some(snapshot) = manager.finalize() {
         emit_source_snapshot(&state, &request, &snapshot);
-        spawn_translation(&mut jobs, state.clone(), request, snapshot);
+        spawn_translation(
+            &mut jobs,
+            state.clone(),
+            request,
+            reference_document,
+            snapshot,
+        );
     }
     if let Err(error) = bridge.stop().await {
         warn!(session_id = %id, reason = %error, "speech bridge stop failed");
@@ -559,10 +598,11 @@ fn spawn_translation(
     jobs: &mut JoinSet<()>,
     state: AppState,
     request: StartSessionRequest,
+    reference_document: Option<Arc<ReferenceDocument>>,
     snapshot: SegmentSnapshot,
 ) {
     jobs.spawn(async move {
-        process_snapshot(state, request, snapshot).await;
+        process_snapshot(state, request, reference_document, snapshot).await;
     });
 }
 
@@ -587,6 +627,7 @@ fn emit_source_snapshot(
 async fn process_snapshot(
     state: AppState,
     request: StartSessionRequest,
+    reference_document: Option<Arc<ReferenceDocument>>,
     snapshot: SegmentSnapshot,
 ) {
     let started = Instant::now();
@@ -700,14 +741,17 @@ async fn process_snapshot(
         match state
             .inner
             .llm
-            .refine(
-                &normalized,
-                &translation_text,
-                &request.source_language,
-                &request.target_language,
-                &context,
-                &glossary,
-            )
+            .refine(LlmRefinementInput {
+                source_text: &normalized,
+                draft_translation: &translation_text,
+                source_language: &request.source_language,
+                target_language: &request.target_language,
+                previous_context: &context,
+                glossary: &glossary,
+                reference_document: reference_document
+                    .as_deref()
+                    .map(|document| document.content.as_str()),
+            })
             .await
         {
             Ok(output) => {
@@ -821,7 +865,29 @@ fn validate_direction(request: &StartSessionRequest) -> Result<(), ApiError> {
             "MVP only supports Chinese-English translation",
         ));
     }
+    validate_reference_path(&request.reference_document_path)?;
     Ok(())
+}
+
+async fn load_session_reference(
+    request: &StartSessionRequest,
+) -> Result<Option<Arc<ReferenceDocument>>, ApiError> {
+    let path = request.reference_document_path.clone();
+    let document = tokio::task::spawn_blocking(move || load_reference_document(&path))
+        .await
+        .map_err(|error| ApiError::internal(format!("参考文档读取任务失败：{error}")))??;
+    Ok(document.map(Arc::new))
+}
+
+fn reference_status(reference: &Option<Arc<ReferenceDocument>>) -> String {
+    reference.as_ref().map_or_else(String::new, |document| {
+        let suffix = if document.truncated {
+            "，已截断"
+        } else {
+            ""
+        };
+        format!(" · LLM 背景：{}{}", document.name, suffix)
+    })
 }
 
 fn base_language(language: &str) -> &str {
@@ -887,6 +953,12 @@ impl From<DictionaryError> for ApiError {
     }
 }
 
+impl From<DocumentError> for ApiError {
+    fn from(error: DocumentError) -> Self {
+        Self::bad_request(&error.to_string())
+    }
+}
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         (
@@ -899,7 +971,7 @@ impl IntoResponse for ApiError {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{fs, time::Duration};
 
     use axum::{
         body::{to_bytes, Body},
@@ -937,11 +1009,13 @@ mod tests {
             target_language: "en-US".to_owned(),
             audio_source: crate::domain::AudioSource::Microphone,
             asr_engine: crate::domain::AsrEngine::AppleSpeech,
+            reference_document_path: String::new(),
         };
 
         process_snapshot(
             state.clone(),
             request.clone(),
+            None,
             SegmentSnapshot {
                 segment_id: 1,
                 revision: 1,
@@ -957,6 +1031,7 @@ mod tests {
         let final_task = tokio::spawn(process_snapshot(
             state.clone(),
             request,
+            None,
             SegmentSnapshot {
                 segment_id: 1,
                 revision: 2,
@@ -1006,7 +1081,7 @@ mod tests {
 
     #[tokio::test]
     async fn health_and_dictionary_work_through_http_router() {
-        let (state, _directory) = test_state();
+        let (state, directory) = test_state();
         let app = router(state);
         let health = app
             .clone()
@@ -1118,6 +1193,8 @@ mod tests {
             "system_audio"
         );
 
+        let reference_path = directory.path().join("brief.txt");
+        fs::write(&reference_path, "Aurora 是产品名").expect("write reference document");
         let saved_overlay_preferences = app
             .clone()
             .oneshot(
@@ -1129,7 +1206,8 @@ mod tests {
                         serde_json::json!({
                             "source_language": "zh-CN",
                             "target_language": "en-US",
-                            "audio_source": "microphone"
+                            "audio_source": "microphone",
+                            "reference_document_path": reference_path.to_string_lossy()
                         })
                         .to_string(),
                     ))
@@ -1152,6 +1230,10 @@ mod tests {
         assert_eq!(
             saved_overlay_preferences_json["preferences"]["asr_engine"],
             "apple_speech"
+        );
+        assert_eq!(
+            saved_overlay_preferences_json["preferences"]["reference_document_path"],
+            reference_path.to_string_lossy().as_ref()
         );
 
         let entry = serde_json::json!({

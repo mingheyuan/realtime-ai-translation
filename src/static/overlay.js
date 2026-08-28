@@ -6,6 +6,7 @@ const stopButton = document.querySelector("#overlay-stop");
 const asrSelect = document.querySelector("#overlay-asr");
 const audioSelect = document.querySelector("#overlay-audio");
 const directionButton = document.querySelector("#overlay-direction");
+const referenceDocumentInput = document.querySelector("#overlay-reference-document");
 
 let socket;
 let reconnectTimer;
@@ -19,6 +20,7 @@ let preferences = {
   target_language: "en-US",
   audio_source: "microphone",
   asr_engine: "apple_speech",
+  reference_document_path: "",
 };
 
 function setRunning(running) {
@@ -28,12 +30,14 @@ function setRunning(running) {
   asrSelect.disabled = running;
   audioSelect.disabled = running;
   directionButton.disabled = running;
+  referenceDocumentInput.disabled = running;
   document.body.classList.toggle("session-running", running);
 }
 
 function updateSettingsControls() {
   asrSelect.value = preferences.asr_engine;
   audioSelect.value = preferences.audio_source;
+  referenceDocumentInput.value = preferences.reference_document_path || "";
   directionButton.textContent = preferences.source_language.startsWith("zh")
     ? "中 → 英"
     : "英 → 中";
@@ -288,6 +292,7 @@ async function savePreferences(nextPreferences) {
   asrSelect.disabled = true;
   audioSelect.disabled = true;
   directionButton.disabled = true;
+  referenceDocumentInput.disabled = true;
   try {
     const state = await jsonRequest("/api/overlay/state", {
       method: "POST",
@@ -303,6 +308,7 @@ async function savePreferences(nextPreferences) {
     asrSelect.disabled = sessionRunning;
     audioSelect.disabled = sessionRunning;
     directionButton.disabled = sessionRunning;
+    referenceDocumentInput.disabled = sessionRunning;
   }
 }
 
@@ -320,6 +326,13 @@ directionButton.addEventListener("click", () => {
     ...preferences,
     source_language: chineseSource ? "en-US" : "zh-CN",
     target_language: chineseSource ? "zh-CN" : "en-US",
+  });
+});
+
+referenceDocumentInput.addEventListener("change", () => {
+  savePreferences({
+    ...preferences,
+    reference_document_path: referenceDocumentInput.value.trim(),
   });
 });
 

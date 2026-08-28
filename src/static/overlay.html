@@ -32,6 +32,17 @@
         <button class="direction-button" id="overlay-direction" type="button">中 → 英</button>
         <span class="settings-hint">右侧斜纹缩放 · 运行中需先停止才能切换</span>
       </div>
+      <div class="reference-bar">
+        <label for="overlay-reference-document">LLM 背景</label>
+        <input
+          id="overlay-reference-document"
+          type="text"
+          placeholder="本地 .txt / .docx / .xlsx 路径（可留空）"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <span>回车或移开焦点保存</span>
+      </div>
       <section class="caption-stack" id="caption-stack" aria-live="polite">
         <article class="caption-card waiting" id="waiting-card">
           <div class="waiting-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>

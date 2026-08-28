@@ -9,6 +9,7 @@ const elements = {
   asrPipelineName: document.querySelector("#asr-pipeline-name"),
   audioSource: document.querySelector("#audio-source"),
   audioSourceHint: document.querySelector("#audio-source-hint"),
+  referenceDocumentPath: document.querySelector("#reference-document-path"),
   source: document.querySelector("#source-language"),
   target: document.querySelector("#target-language"),
   status: document.querySelector("#session-status"),
@@ -42,6 +43,7 @@ function setRunning(running) {
   elements.target.disabled = running;
   elements.asrEngine.disabled = running;
   elements.audioSource.disabled = running;
+  elements.referenceDocumentPath.disabled = running;
   elements.swap.disabled = running;
   document.body.classList.toggle("recording", running);
 }
@@ -53,6 +55,7 @@ function setStopping() {
   elements.target.disabled = true;
   elements.asrEngine.disabled = true;
   elements.audioSource.disabled = true;
+  elements.referenceDocumentPath.disabled = true;
   elements.swap.disabled = true;
   document.body.classList.remove("recording");
 }
@@ -347,6 +350,7 @@ elements.start.addEventListener("click", async () => {
         target_language: elements.target.value,
         audio_source: elements.audioSource.value,
         asr_engine: elements.asrEngine.value,
+        reference_document_path: elements.referenceDocumentPath.value.trim(),
       }),
     });
   } catch (error) {
@@ -387,6 +391,7 @@ elements.overlayOpen.addEventListener("click", async () => {
         target_language: elements.target.value,
         audio_source: elements.audioSource.value,
         asr_engine: elements.asrEngine.value,
+        reference_document_path: elements.referenceDocumentPath.value.trim(),
       }),
     });
     showToast("悬浮字幕已打开；可拖动到任意位置");
@@ -567,6 +572,24 @@ async function loadHealth() {
   }
 }
 
+async function loadPreferences() {
+  try {
+    const state = await jsonRequest("/api/overlay/state");
+    const preferences = state.preferences;
+    elements.source.value = preferences.source_language;
+    elements.target.value = preferences.target_language;
+    elements.audioSource.value = preferences.audio_source;
+    elements.asrEngine.value = preferences.asr_engine;
+    elements.referenceDocumentPath.value = preferences.reference_document_path || "";
+    sessionActive = state.running;
+    setRunning(state.running);
+    updateAsrPresentation();
+  } catch (error) {
+    showToast(error.message, "error");
+  }
+}
+
 connectSocket();
 loadHealth();
+loadPreferences();
 loadDictionary();

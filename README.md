@@ -55,6 +55,7 @@ MarianMT 本身不是流式模型，不能安全地只翻译 ASR 新增的几个
 - 切换 ASR 时只保存引擎 ID，点击“开始”才创建所选 provider，停止后释放进程和模型。
 - 音频来源可选择麦克风或系统音频；系统音频可识别视频通话、播放器等应用播放的声音。
 - SQLite 双语个人词典。
+- 可选 LLM 参考文档路径，支持 UTF-8 `.txt`、`.docx` 和 `.xlsx`，用于术语、实体与领域语境消歧。
 - 词典术语和别名作为 Apple `contextualStrings` 热词。
 - ASR 后确定性别名纠正和 MarianMT glossary 约束。
 - 本地 OPUS-MT 中文→英文、英文→中文模型，进程常驻并按方向懒加载。
@@ -117,6 +118,12 @@ RT_TRANSLATION_SHERPA_BRIDGE=/absolute/project/path/scripts/sherpa-onnx-bridge
 选择 Sherpa-ONNX 后，Rust 先启动 Python bridge，模型加载完成后再启动稳定签名的 macOS 音频桥。音频桥负责麦克风或 ScreenCaptureKit 系统音频权限，并发送单声道 Float32 PCM；Sherpa 内部重采样后负责 `partial`、endpoint 和 `final`。停止会话后两个进程和模型内存都会释放。模型文件放在被 Git 忽略的 `models/`，不会提交到仓库。
 
 悬浮窗沿用了 Saymore 的关键窗口行为：无边框透明背景、floating 层级、`CanJoinAllSpaces` 与 `FullScreenAuxiliary`。字幕内部仍采用本项目的“一个可变当前段 + 一个不可变历史段”状态机，历史段封存后不会被迟到的翻译结果刷新。
+
+## LLM 参考文档
+
+主界面和悬浮窗都可填写本地 `.txt`、`.docx` 或 `.xlsx` 路径，也支持以 `~/` 开头的路径。文档在点击开始时解析一次：文件上限 20MB，提取文字最多保留约 12,000 字符。ASR 和 MarianMT 不读取文档，因此首字与草稿延迟不受影响；提取内容只随最终断句发送给已配置的 LLM，用于识别术语、实体、缩写和领域语境。
+
+系统提示词把文档明确标记为不可信参考资料：它不能覆盖翻译指令，也不能让 LLM 补入当前语音中没有表达的事实。文件路径本身不会发送给 LLM，但提取后的文字会发送到 `.env.local` 配置的 LLM 服务，请不要选择不应上传到该服务的敏感文档。
 
 ### 识别视频通话声音
 
