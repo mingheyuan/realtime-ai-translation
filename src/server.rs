@@ -25,7 +25,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::{
-    asr::{AppleSpeechBridge, AsrEvent},
+    asr::{AsrEvent, AsrProviderRegistry, AsrProviderStatus},
     config::AppConfig,
     dictionary::{DictionaryError, DictionaryStore},
     domain::{
@@ -47,6 +47,7 @@ pub struct AppState {
 
 struct AppStateInner {
     config: AppConfig,
+    asr: AsrProviderRegistry,
     dictionary: DictionaryStore,
     translator: SharedTranslationProvider,
     translation_gate: Arc<Semaphore>,
@@ -66,6 +67,10 @@ struct SessionHandle {
 
 impl AppState {
     pub fn new(config: AppConfig) -> anyhow::Result<Self> {
+        let asr = AsrProviderRegistry::new(
+            config.speech_bridge_path.clone(),
+            config.sherpa_bridge_path.clone(),
+        );
         let dictionary = DictionaryStore::open(config.database_path.clone())?;
         let translator: SharedTranslationProvider = if config.fake_translation {
             Arc::new(FakeTranslator)
@@ -80,6 +85,7 @@ impl AppState {
         Ok(Self {
             inner: Arc::new(AppStateInner {
                 config,
+                asr,
                 dictionary,
                 translator,
                 translation_gate: Arc::new(Semaphore::new(1)),
@@ -91,6 +97,7 @@ impl AppState {
                     source_language: "zh-CN".to_owned(),
                     target_language: "en-US".to_owned(),
                     audio_source: crate::domain::AudioSource::Microphone,
+                    asr_engine: crate::domain::AsrEngine::AppleSpeech,
                 }),
                 context: Mutex::new(VecDeque::with_capacity(4)),
                 streaming: Mutex::new(TranslationStateMachine::default()),
@@ -197,6 +204,7 @@ async fn overlay_stylesheet() -> impl IntoResponse {
 struct HealthResponse {
     ok: bool,
     speech_bridge_ready: bool,
+    asr_providers: Vec<AsrProviderStatus>,
     overlay_ready: bool,
     model_worker_ready: bool,
     fake_translation: bool,
@@ -206,7 +214,11 @@ struct HealthResponse {
 async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
     Json(HealthResponse {
         ok: true,
-        speech_bridge_ready: state.inner.config.speech_bridge_path.is_dir(),
+        speech_bridge_ready: state
+            .inner
+            .asr
+            .available(crate::domain::AsrEngine::AppleSpeech),
+        asr_providers: state.inner.asr.statuses(),
         overlay_ready: state.inner.config.overlay_app_path.is_dir(),
         model_worker_ready: state.inner.config.python_path.is_file()
             && state.inner.config.model_worker_path.is_file(),
@@ -337,6 +349,15 @@ async fn start_session(
     Json(request): Json<StartSessionRequest>,
 ) -> Result<Json<SessionResponse>, ApiError> {
     validate_direction(&request)?;
+    if !state.inner.asr.available(request.asr_engine) {
+        let message = match request.asr_engine {
+            crate::domain::AsrEngine::AppleSpeech => "Apple Speech bridge 尚未构建或不可用",
+            crate::domain::AsrEngine::SherpaOnnx => {
+                "Sherpa-ONNX 尚未配置；请设置 RT_TRANSLATION_SHERPA_BRIDGE"
+            }
+        };
+        return Err(ApiError::service_unavailable(message));
+    }
     *state.inner.overlay_preferences.lock().await = request.clone();
     state.warmup_translation(request.clone());
     let hotwords = state.inner.dictionary.hotwords(&request.source_language)?;
@@ -394,13 +415,16 @@ async fn run_session(
     hotwords: Vec<String>,
     mut stop: oneshot::Receiver<()>,
 ) {
-    let mut bridge = match AppleSpeechBridge::spawn(
-        &state.inner.config.speech_bridge_path,
-        &request.source_language,
-        request.audio_source,
-        &hotwords,
-    )
-    .await
+    let mut bridge = match state
+        .inner
+        .asr
+        .start(
+            request.asr_engine,
+            &request.source_language,
+            request.audio_source,
+            &hotwords,
+        )
+        .await
     {
         Ok(bridge) => bridge,
         Err(error) => {
@@ -423,7 +447,8 @@ async fn run_session(
     state.emit(ServerEvent::SessionStatus {
         running: true,
         message: format!(
-            "正在等待 Apple Speech（{}）",
+            "正在等待 {}（{}）",
+            request.asr_engine.description(),
             request.audio_source.description()
         ),
     });
@@ -445,7 +470,8 @@ async fn run_session(
                         state.emit(ServerEvent::SessionStatus {
                             running: true,
                             message: format!(
-                                "Apple Speech 已就绪：{locale} · {}",
+                                "{} 已就绪：{locale} · {}",
+                                request.asr_engine.description(),
                                 request.audio_source.description()
                             ),
                         });
@@ -910,6 +936,7 @@ mod tests {
             source_language: "zh-CN".to_owned(),
             target_language: "en-US".to_owned(),
             audio_source: crate::domain::AudioSource::Microphone,
+            asr_engine: crate::domain::AsrEngine::AppleSpeech,
         };
 
         process_snapshot(
@@ -1000,6 +1027,13 @@ mod tests {
         assert_eq!(health_json["ok"], true);
         assert_eq!(health_json["fake_translation"], true);
         assert_eq!(health_json["overlay_ready"], false);
+        assert_eq!(health_json["asr_providers"][0]["id"], "apple_speech");
+        assert_eq!(health_json["asr_providers"][0]["available"], false);
+        assert_eq!(
+            health_json["asr_providers"][0]["load_policy"],
+            "on_session_start"
+        );
+        assert_eq!(health_json["asr_providers"][1]["id"], "sherpa_onnx");
 
         let overlay = app
             .clone()
@@ -1115,6 +1149,10 @@ mod tests {
             saved_overlay_preferences_json["preferences"]["source_language"],
             "zh-CN"
         );
+        assert_eq!(
+            saved_overlay_preferences_json["preferences"]["asr_engine"],
+            "apple_speech"
+        );
 
         let entry = serde_json::json!({
             "id": null,
@@ -1168,6 +1206,7 @@ mod tests {
             listen: "127.0.0.1:0".parse().expect("listen address"),
             database_path: directory.path().join("dictionary.sqlite3"),
             speech_bridge_path: directory.path().join("speech-bridge"),
+            sherpa_bridge_path: None,
             overlay_app_path: directory.path().join("overlay.app"),
             python_path: directory.path().join("python"),
             model_worker_path: directory.path().join("worker.py"),

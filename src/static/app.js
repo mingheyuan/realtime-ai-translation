@@ -5,6 +5,8 @@ const elements = {
   stop: document.querySelector("#stop"),
   overlayOpen: document.querySelector("#overlay-open"),
   swap: document.querySelector("#swap"),
+  asrEngine: document.querySelector("#asr-engine"),
+  asrPipelineName: document.querySelector("#asr-pipeline-name"),
   audioSource: document.querySelector("#audio-source"),
   audioSourceHint: document.querySelector("#audio-source-hint"),
   source: document.querySelector("#source-language"),
@@ -38,6 +40,7 @@ function setRunning(running) {
   elements.stop.disabled = !running;
   elements.source.disabled = running;
   elements.target.disabled = running;
+  elements.asrEngine.disabled = running;
   elements.audioSource.disabled = running;
   elements.swap.disabled = running;
   document.body.classList.toggle("recording", running);
@@ -48,6 +51,7 @@ function setStopping() {
   elements.stop.disabled = true;
   elements.source.disabled = true;
   elements.target.disabled = true;
+  elements.asrEngine.disabled = true;
   elements.audioSource.disabled = true;
   elements.swap.disabled = true;
   document.body.classList.remove("recording");
@@ -55,6 +59,17 @@ function setStopping() {
 
 function setStatus(message) {
   elements.status.textContent = message;
+}
+
+function selectedAsrLabel() {
+  const option = elements.asrEngine.selectedOptions[0];
+  return option?.dataset.label || option?.textContent.replace("（未配置）", "") || "语音识别";
+}
+
+function updateAsrPresentation() {
+  elements.asrPipelineName.textContent = selectedAsrLabel();
+  document.querySelector('[data-health="speech"]').dataset.ready =
+    elements.asrEngine.selectedOptions[0]?.dataset.available === "true";
 }
 
 function showToast(message, tone = "normal") {
@@ -324,13 +339,14 @@ async function jsonRequest(url, options = {}) {
 elements.start.addEventListener("click", async () => {
   setRunning(true);
   try {
-    setStatus("正在启动 Apple Speech…");
+    setStatus(`正在按需加载 ${selectedAsrLabel()}…`);
     await jsonRequest("/api/session/start", {
       method: "POST",
       body: JSON.stringify({
         source_language: elements.source.value,
         target_language: elements.target.value,
         audio_source: elements.audioSource.value,
+        asr_engine: elements.asrEngine.value,
       }),
     });
   } catch (error) {
@@ -370,6 +386,7 @@ elements.overlayOpen.addEventListener("click", async () => {
         source_language: elements.source.value,
         target_language: elements.target.value,
         audio_source: elements.audioSource.value,
+        asr_engine: elements.asrEngine.value,
       }),
     });
     showToast("悬浮字幕已打开；可拖动到任意位置");
@@ -403,6 +420,11 @@ elements.audioSource.addEventListener("change", () => {
   elements.audioSourceHint.textContent = systemAudio
     ? "系统音频模式识别视频通话、播放器等应用的声音；首次使用需要授予屏幕与系统音频录制权限。"
     : "麦克风模式识别你说的话；首次使用需要授予麦克风和语音识别权限。";
+});
+
+elements.asrEngine.addEventListener("change", () => {
+  updateAsrPresentation();
+  setStatus(`已切换到 ${selectedAsrLabel()} · 点击开始时加载`);
 });
 
 function setDictionaryOpen(open) {
@@ -519,8 +541,20 @@ async function saveCorrection(article) {
 async function loadHealth() {
   try {
     const health = await jsonRequest("/api/health");
-    document.querySelector('[data-health="speech"]').dataset.ready =
-      health.speech_bridge_ready;
+    const providers = health.asr_providers || [];
+    for (const option of elements.asrEngine.options) {
+      const provider = providers.find((item) => item.id === option.value);
+      if (!provider) continue;
+      option.dataset.label = provider.label;
+      option.dataset.available = String(provider.available);
+      option.textContent = provider.available ? provider.label : `${provider.label}（未配置）`;
+      option.disabled = !provider.available;
+    }
+    if (elements.asrEngine.selectedOptions[0]?.disabled) {
+      const firstAvailable = [...elements.asrEngine.options].find((option) => !option.disabled);
+      if (firstAvailable) elements.asrEngine.value = firstAvailable.value;
+    }
+    updateAsrPresentation();
     document.querySelector('[data-health="model"]').dataset.ready =
       health.model_worker_ready || health.fake_translation;
     document.querySelector('[data-health="llm"]').dataset.ready = health.llm_enabled;

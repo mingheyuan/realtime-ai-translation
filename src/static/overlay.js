@@ -3,6 +3,7 @@ const waiting = document.querySelector("#waiting-card");
 const statusLabel = document.querySelector("#overlay-status");
 const startButton = document.querySelector("#overlay-start");
 const stopButton = document.querySelector("#overlay-stop");
+const asrSelect = document.querySelector("#overlay-asr");
 const audioSelect = document.querySelector("#overlay-audio");
 const directionButton = document.querySelector("#overlay-direction");
 
@@ -17,22 +18,45 @@ let preferences = {
   source_language: "zh-CN",
   target_language: "en-US",
   audio_source: "microphone",
+  asr_engine: "apple_speech",
 };
 
 function setRunning(running) {
   sessionRunning = running;
   startButton.disabled = running;
   stopButton.disabled = !running;
+  asrSelect.disabled = running;
   audioSelect.disabled = running;
   directionButton.disabled = running;
   document.body.classList.toggle("session-running", running);
 }
 
 function updateSettingsControls() {
+  asrSelect.value = preferences.asr_engine;
   audioSelect.value = preferences.audio_source;
   directionButton.textContent = preferences.source_language.startsWith("zh")
     ? "中 → 英"
     : "英 → 中";
+}
+
+function selectedAsrLabel() {
+  const option = asrSelect.selectedOptions[0];
+  return option?.dataset.label || option?.textContent.replace("（未配置）", "") || "语音识别";
+}
+
+async function loadAsrProviders() {
+  try {
+    const health = await jsonRequest("/api/health");
+    for (const option of asrSelect.options) {
+      const provider = health.asr_providers?.find((item) => item.id === option.value);
+      if (!provider) continue;
+      option.dataset.label = provider.label;
+      option.textContent = provider.available ? provider.label : `${provider.label}（未配置）`;
+      option.disabled = !provider.available;
+    }
+  } catch (error) {
+    statusLabel.textContent = error.message;
+  }
 }
 
 async function jsonRequest(url, options = {}) {
@@ -244,7 +268,7 @@ function renderCaption(event) {
 
 startButton.addEventListener("click", async () => {
   startButton.disabled = true;
-  statusLabel.textContent = "正在启动 Apple Speech…";
+  statusLabel.textContent = `正在按需加载 ${selectedAsrLabel()}…`;
   try {
     const state = await jsonRequest("/api/overlay/state");
     preferences = state.preferences;
@@ -261,6 +285,7 @@ startButton.addEventListener("click", async () => {
 });
 
 async function savePreferences(nextPreferences) {
+  asrSelect.disabled = true;
   audioSelect.disabled = true;
   directionButton.disabled = true;
   try {
@@ -275,10 +300,15 @@ async function savePreferences(nextPreferences) {
     updateSettingsControls();
     statusLabel.textContent = error.message;
   } finally {
+    asrSelect.disabled = sessionRunning;
     audioSelect.disabled = sessionRunning;
     directionButton.disabled = sessionRunning;
   }
 }
+
+asrSelect.addEventListener("change", () => {
+  savePreferences({ ...preferences, asr_engine: asrSelect.value });
+});
 
 audioSelect.addEventListener("change", () => {
   savePreferences({ ...preferences, audio_source: audioSelect.value });
@@ -308,5 +338,6 @@ stopButton.addEventListener("click", async () => {
 });
 
 updateSettingsControls();
+loadAsrProviders();
 refreshOverlayState();
 connect();

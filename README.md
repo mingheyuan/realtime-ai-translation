@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/mingheyuan/realtime-ai-translation/actions/workflows/ci.yml/badge.svg)](https://github.com/mingheyuan/realtime-ai-translation/actions/workflows/ci.yml)
 
-macOS 上的中英双向实时语音翻译 MVP。它沿用 Saymore 值得借鉴的思路：Apple Speech 流式听写、个人词典、可回写的错误纠正；在 ASR 与可选 LLM 之间增加本地 MarianMT，让字幕不必等待云端模型。
+macOS 上的中英双向实时语音翻译 MVP。它沿用 Saymore 值得借鉴的思路：流式听写、个人词典、可回写的错误纠正；在可替换 ASR 与可选 LLM 之间增加本地 MarianMT，让字幕不必等待云端模型。默认使用 Apple Speech，并预留 Sherpa-ONNX provider。
 
 > 本项目是独立实现，没有复制 Saymore 源码。Saymore 使用 PolyForm Shield 许可证，本项目使用 MIT 许可证。
 
@@ -11,7 +11,7 @@ macOS 上的中英双向实时语音翻译 MVP。它沿用 Saymore 值得借鉴�
 ```text
 麦克风（自己的声音）或 ScreenCaptureKit 系统音频（通话对方）
   ↓
-Apple Speech（partial / final + contextualStrings 热词）
+按会话加载的 ASR provider（默认 Apple Speech，partial / final + 热词）
   ↓
 个人词典标准化（已知 ASR 错词 → 标准词）
   ↓
@@ -42,15 +42,16 @@ MarianMT 本身不是流式模型，不能安全地只翻译 ASR 新增的几个
 
 默认可变窗口上限为中文 36 个字、英文 96 个字符。窗口结果仍使用 `segment_id + revision` 校验，旧 generation 即使晚返回也不会覆盖新字幕。
 
-这不是三套 ASR。Apple Speech 是唯一的语音识别器；MarianMT 和 LLM 接收的都是文字：
+这不是三套 ASR。一次会话只加载一个已选择的语音识别 provider；MarianMT 和 LLM 接收的都是文字：
 
-- Apple Speech：尽快把声音变成可修订的源语言文字。
+- Apple Speech / 可选 Sherpa-ONNX：尽快把声音变成可修订的源语言文字。
 - MarianMT：本地专用翻译模型，生成低延迟草稿。
 - LLM：只在断句后结合最近两句和术语表做保守润色，可以完全关闭。
 
 ## 当前功能
 
-- Apple Speech 中英文流式 `partial` / `final` 识别。
+- 可替换 ASR provider；默认 Apple Speech 中英文流式 `partial` / `final` 识别。
+- 切换 ASR 时只保存引擎 ID，点击“开始”才创建所选 provider，停止后释放进程和模型。
 - 音频来源可选择麦克风或系统音频；系统音频可识别视频通话、播放器等应用播放的声音。
 - SQLite 双语个人词典。
 - 词典术语和别名作为 Apple `contextualStrings` 热词。
@@ -90,7 +91,19 @@ cargo run
 
 `setup-macos-codesigning.sh` 会在当前用户的登录钥匙串中创建项目专用的稳定签名身份，证书和私钥不会写入仓库。稳定签名可避免每次重编译 Apple Speech 桥接后，麦克风、语音识别和屏幕录制权限因 ad-hoc 签名哈希变化而失效。首次切换到稳定签名后仍需重新授权一次。
 
-打开 <http://127.0.0.1:8765>，选择音频来源和翻译方向，再点击“开始实时翻译”。点击“悬浮字幕”会打开一个不占 Dock、半透明、始终置顶的原生字幕窗口；窗口内可以直接切换麦克风/系统音频和中英方向，也可以开始或停止翻译。拖动顶部可以移动，拖动右下角的原生缩放手柄可以调整大小，位置和尺寸会自动记忆，点右上角 `×` 关闭。它和主界面读取同一个 WebSocket，不会启动第二套 ASR 或翻译任务。
+打开 <http://127.0.0.1:8765>，选择 ASR、音频来源和翻译方向，再点击“开始实时翻译”。点击“悬浮字幕”会打开一个不占 Dock、半透明、始终置顶的原生字幕窗口；窗口内可以直接切换 ASR、麦克风/系统音频和中英方向，也可以开始或停止翻译。拖动顶部可以移动，拖动右下角的原生缩放手柄可以调整大小，位置和尺寸会自动记忆，点右上角 `×` 关闭。它和主界面读取同一个 WebSocket，不会启动第二套 ASR 或翻译任务。
+
+### 可替换 ASR 与按需加载
+
+ASR 采用 provider/session 两层接口。设置页只保存 `apple_speech` 或 `sherpa_onnx`，切换选择不会启动进程、下载模型或占用模型内存；点击开始时才创建对应会话，停止后关闭并释放。`/api/health` 会返回每个 provider 的可用状态，未配置项在主界面和悬浮窗中会禁用。
+
+Apple Speech bridge 随项目构建。Sherpa-ONNX 适配位接受实现相同 Unix socket JSON 协议的可执行文件或 `.app`，配置示例：
+
+```bash
+RT_TRANSLATION_SHERPA_BRIDGE=/absolute/path/sherpa-asr-bridge
+```
+
+桥接程序需接受 `--socket`、`--locale`、`--audio-source` 和重复的 `--term` 参数，并输出 `ready`、`partial`、`final`、`error` 事件。仓库目前提供的是接口和懒加载生命周期，尚未内置 Sherpa 模型权重。
 
 悬浮窗沿用了 Saymore 的关键窗口行为：无边框透明背景、floating 层级、`CanJoinAllSpaces` 与 `FullScreenAuxiliary`。字幕内部仍采用本项目的“一个可变当前段 + 一个不可变历史段”状态机，历史段封存后不会被迟到的翻译结果刷新。
 

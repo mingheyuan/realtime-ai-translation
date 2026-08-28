@@ -41,12 +41,36 @@ pub enum ServerEvent {
     DictionaryChanged,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum AudioSource {
     #[default]
     Microphone,
     SystemAudio,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AsrEngine {
+    #[default]
+    AppleSpeech,
+    SherpaOnnx,
+}
+
+impl AsrEngine {
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::AppleSpeech => "apple_speech",
+            Self::SherpaOnnx => "sherpa_onnx",
+        }
+    }
+
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::AppleSpeech => "Apple Speech",
+            Self::SherpaOnnx => "Sherpa-ONNX",
+        }
+    }
 }
 
 impl AudioSource {
@@ -71,6 +95,8 @@ pub struct StartSessionRequest {
     pub target_language: String,
     #[serde(default)]
     pub audio_source: AudioSource,
+    #[serde(default)]
+    pub asr_engine: AsrEngine,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -146,6 +172,7 @@ mod tests {
         .expect("valid session request");
 
         assert_eq!(request.audio_source, AudioSource::Microphone);
+        assert_eq!(request.asr_engine, AsrEngine::AppleSpeech);
     }
 
     #[test]
@@ -159,5 +186,18 @@ mod tests {
 
         assert_eq!(request.audio_source, AudioSource::SystemAudio);
         assert_eq!(request.audio_source.bridge_argument(), "system_audio");
+    }
+
+    #[test]
+    fn session_accepts_replaceable_asr_engine() {
+        let request: StartSessionRequest = serde_json::from_value(serde_json::json!({
+            "source_language": "en-US",
+            "target_language": "zh-CN",
+            "asr_engine": "sherpa_onnx"
+        }))
+        .expect("valid ASR engine");
+
+        assert_eq!(request.asr_engine, AsrEngine::SherpaOnnx);
+        assert_eq!(request.asr_engine.id(), "sherpa_onnx");
     }
 }

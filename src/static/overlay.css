@@ -92,6 +92,7 @@ body.disconnected .live-dot { background: #ff7379; }
 }
 
 .settings-bar select { width: 82px; padding: 0 6px; }
+#overlay-asr { width: 112px; }
 .settings-bar button { min-width: 58px; padding: 0 9px; cursor: pointer; }
 .settings-bar select:disabled, .settings-bar button:disabled { opacity: 0.36; cursor: default; }
 .settings-hint { margin-left: auto; white-space: nowrap; }

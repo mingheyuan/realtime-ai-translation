@@ -14,7 +14,7 @@
           <span class="brand-mark" aria-hidden="true">译</span>
           <div>
             <h1>Realtime AI Translation</h1>
-            <p>Apple Speech · Personal Glossary · MarianMT · LLM</p>
+            <p>Pluggable ASR · Personal Glossary · MarianMT · LLM</p>
           </div>
         </div>
         <div class="connection">
@@ -26,6 +26,13 @@
       <main>
         <section class="control-card">
           <div class="direction">
+            <label>
+              <span>语音识别</span>
+              <select id="asr-engine">
+                <option value="apple_speech">Apple Speech</option>
+                <option value="sherpa_onnx">Sherpa-ONNX（未配置）</option>
+              </select>
+            </label>
             <label>
               <span>音频来源</span>
               <select id="audio-source">
@@ -67,7 +74,7 @@
         <section class="pipeline" aria-label="处理流程">
           <div data-health="speech">
             <span class="pipeline-index">1</span>
-            <div><strong>Apple Speech</strong><small>实时原文 · partial</small></div>
+            <div><strong id="asr-pipeline-name">Apple Speech</strong><small>实时原文 · partial</small></div>
           </div>
           <i>→</i>
           <div data-health="model">

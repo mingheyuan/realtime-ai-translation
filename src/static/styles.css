@@ -55,7 +55,7 @@ main { padding-top: 30px; }
   box-shadow: 0 24px 70px rgba(0,0,0,.22);
   backdrop-filter: blur(18px);
 }
-.direction { display: grid; grid-template-columns: 1.25fr 1fr 42px 1fr; gap: 14px; align-items: end; }
+.direction { display: grid; grid-template-columns: 1fr 1.25fr 1fr 42px 1fr; gap: 14px; align-items: end; }
 label > span {
   display: block;
   margin-bottom: 8px;
